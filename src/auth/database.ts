@@ -67,13 +67,27 @@ function resolveD1Binding(
   }
 }
 
+// The `pg` driver comes from the consumer (`database.pg`) when the Worker
+// is bundled, since a bundler only includes modules it can see imported;
+// `require('pg')` is a fallback for runtimes that resolve modules at
+// runtime (Bun, Node).
+function resolvePgPoolClass(
+  options?: CreateAuthOptions
+): (new (config: { connectionString?: string; max?: number }) => PgPool) | undefined {
+  const database = options?.database;
+  if (database && typeof database === 'object' && 'pg' in database && database.pg) {
+    return database.pg.Pool;
+  }
+  return loadPgPoolClass();
+}
+
 export function resolveDatabase(
   options?: CreateAuthOptions,
   envObj?: Partial<AuthEnv>
 ): BuildDatabaseResult | undefined {
   const connectionString = resolveHyperdriveConnectionString(options, envObj);
   if (connectionString) {
-    const PoolClass = loadPgPoolClass();
+    const PoolClass = resolvePgPoolClass(options);
     if (PoolClass) {
       const pool = new PoolClass({
         connectionString,

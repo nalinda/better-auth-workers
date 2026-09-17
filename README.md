@@ -103,6 +103,7 @@ Secrets, set with `wrangler secret put`:
 
 ```ts
 import { Hono } from 'hono';
+import pg from 'pg';
 import { createAuth, type AuthEnv } from 'better-auth-workers';
 
 type Env = AuthEnv & {
@@ -115,7 +116,7 @@ const app = new Hono<{ Bindings: Env }>();
 app.on(['GET', 'POST'], '/auth/*', (c) => {
   const auth = createAuth(c.env, {
     basePath: '/auth',
-    database: { hyperdrive: c.env.HYPERDRIVE },
+    database: { hyperdrive: c.env.HYPERDRIVE, pg },
     kv: c.env.AUTH_KV,
     phone: {
       sendOTP: async ({ phoneNumber, code }) => {
@@ -159,7 +160,7 @@ await authClient.phoneNumber.verify({ phoneNumber: '+94771234567', code: '123456
 | `basePath`       | `string`                                                | `'/api/auth'`            | Path prefix the Worker serves Better Auth under.                           |
 | `baseURL`        | `string`                                                | `env.AUTH_BASE_URL`      | Public origin used for callbacks and cookies.                              |
 | `secret`         | `string`                                                | `env.BETTER_AUTH_SECRET` | Signing secret.                                                            |
-| `database`       | `{ hyperdrive: Hyperdrive } \| { d1: D1Database }`      | required                 | Primary store. See [Storage](#storage).                                    |
+| `database`       | `{ hyperdrive: Hyperdrive, pg } \| { d1: D1Database }`  | required                 | Primary store. See [Storage](#storage).                                    |
 | `kv`             | `KVNamespace`                                           | required                 | Secondary storage for session cache and rate limiting.                     |
 | `phone`          | `{ sendOTP, otpLength?, expiresIn?, allowedAttempts? }` | off                      | Enables the phone-number plugin. See [Phone OTP](#phone-otp).              |
 | `google`         | `boolean \| { clientId, clientSecret }`                 | off                      | Enables Google sign-in. `true` reads the secrets from `env`.               |
@@ -176,12 +177,17 @@ Everything not listed is Better Auth's default. Session lifetime, cookie attribu
 ### Postgres through Hyperdrive
 
 ```ts
+import pg from 'pg';
+
 database: {
   hyperdrive: env.HYPERDRIVE;
+  pg;
 }
 ```
 
 On each request, a small `pg` Pool is created from `env.HYPERDRIVE.connectionString` and handed to Better Auth. It closes itself after the response, via `waitUntil`. Better Auth talks to it through its bundled Kysely dialect, so you never write a query yourself.
+
+The Worker imports `pg` and passes it in because Workers are bundled: the bundler only includes modules it sees imported, so the package cannot load the driver on your behalf without forcing it on D1 deployments too.
 
 Hyperdrive keeps the real database connections warm behind the scenes, which is what makes creating a new pool on every request cheap.
 
@@ -229,6 +235,7 @@ Here's what the package does around your function:
 - Doesn't queue it. A code that arrives after it's expired is worse than no code at all.
 - Sends delivery failures to the Worker's logs, never to the client response.
 - Never logs the code itself.
+- Creates the user on the first successful verification of an unknown number. Better Auth needs an email on every user, so it gets `<phoneNumber>@phone.invalid` (a reserved, undeliverable domain) and the number as its name. Override with `signUpOnVerification: { getTempEmail, getTempName? }` if you want a different placeholder.
 
 Phone numbers must be E.164 before `sendOTP` is called. If your users type local formats, normalise them on the client, or in a `betterAuth.hooks.before` hook.
 

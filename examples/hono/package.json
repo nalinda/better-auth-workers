@@ -12,7 +12,8 @@
   "dependencies": {
     "better-auth": "^1.7.0",
     "better-auth-workers": "file:../..",
-    "hono": "^4.0.0"
+    "hono": "^4.0.0",
+    "pg": "^8.0.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260917.1",

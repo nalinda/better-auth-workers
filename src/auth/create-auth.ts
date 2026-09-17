@@ -1,7 +1,8 @@
 import { betterAuth } from 'better-auth';
+import { createAuthMiddleware } from 'better-auth/api';
 
 import { withHandlerContext } from '../shared/non-blocking';
-import type { AuthEnv } from '../types';
+import type { AuthEnv, ConfigValue } from '../types';
 import { buildAllowedMethodsHook } from './allowed-methods';
 import { buildRateLimitConfig, buildSessionConfig } from './config';
 import { resolveDatabase, resolveHyperdriveConnectionString } from './database';
@@ -16,21 +17,42 @@ import { validateConfig } from './validate';
 
 export type AuthInstance = ReturnType<typeof betterAuth>;
 
+// Better Auth's dispatcher hands `hooks.after` the raw dispatch context, which
+// carries the request headers but not the cookie helpers (`getSignedCookie`)
+// an endpoint handler gets. `createAuthMiddleware` builds those helpers from
+// the request, so the invalidation hook can read the signed session cookie
+// on `/sign-out` over HTTP. A context that already has the helpers (a direct
+// call with an endpoint context) is used as is, since re-wrapping would
+// replace its `getSignedCookie` with one that only sees request headers.
+function withEndpointContext(
+  handler: (ctx: never) => Promise<void>
+): (ctx: never) => Promise<unknown> {
+  const wrapped = createAuthMiddleware(handler as never) as unknown as (
+    ctx: never
+  ) => Promise<unknown>;
+  return (ctx: never) =>
+    typeof (ctx as { getSignedCookie?: unknown }).getSignedCookie === 'function'
+      ? handler(ctx)
+      : wrapped(ctx);
+}
+
 // Composes any user-supplied `hooks.after` with the session-cache
 // invalidation hook, so wiring cache invalidation never clobbers a hook a
 // consumer configured through `options.hooks` or `options.betterAuth.hooks`.
+// The dispatcher reads `headers` and `response` off whatever the hook
+// resolves to, so this always resolves to an object: the user's result when
+// there is one, an empty one otherwise.
 function mergeAfterHook(
   existing: { after?: (ctx: never) => Promise<unknown> } | undefined,
   invalidateSessionCache: (ctx: never) => Promise<void>
 ): { after: (ctx: never) => Promise<unknown> } {
   const existingAfter = existing?.after;
-  if (!existingAfter) {
-    return { after: invalidateSessionCache };
-  }
+  const invalidate = withEndpointContext(invalidateSessionCache);
   return {
     after: async (ctx: never) => {
-      await existingAfter(ctx);
-      await invalidateSessionCache(ctx);
+      const result = await existingAfter?.(ctx);
+      await invalidate(ctx);
+      return result ?? {};
     },
   };
 }
@@ -82,6 +104,22 @@ function buildHooksField(
   };
 }
 
+// Schema validation is off by default because the schema ships as SQL
+// migrations (see migrations/) and D1/Hyperdrive have no introspection the
+// check could use. A consumer's `advanced` settings (through `options` or
+// `options.betterAuth`) are layered on top rather than replacing the default,
+// so setting e.g. `advanced.disableCSRFCheck` does not silently turn the
+// schema check back on.
+function buildAdvancedConfig(options?: CreateAuthOptions): Record<string, ConfigValue> {
+  const user = (options?.betterAuth?.advanced ?? options?.advanced) as
+    Record<string, ConfigValue> | undefined;
+  const userDatabase = user?.database as Record<string, ConfigValue> | undefined;
+  return {
+    ...user,
+    database: { validateSchema: false, ...userDatabase },
+  };
+}
+
 const instanceCache = new WeakMap<object, Map<string, AuthInstance>>();
 
 function getCachedInstance(env: object, optionsKey: string): AuthInstance | undefined {
@@ -129,11 +167,6 @@ export function createAuth(
 
   const defaults = {
     basePath: '/api/auth',
-    advanced: {
-      database: {
-        validateSchema: false,
-      },
-    },
   };
 
   const authConfig = {
@@ -146,6 +179,7 @@ export function createAuth(
     ...(socialProviders !== undefined && { socialProviders }),
     plugins,
     ...options?.betterAuth,
+    advanced: buildAdvancedConfig(options),
     session,
     ...(rateLimit !== undefined && { rateLimit }),
     ...buildHooksField(options, invalidateSessionCache, checkAllowedMethods),

@@ -46,6 +46,7 @@ interface CreateAuthOptions {
     otpLength?: number;
     expiresIn?: number;
     allowedAttempts?: number;
+    signUpOnVerification?: { getTempEmail: (phoneNumber: string) => string };
   };
   [key: string]: unknown;
 }
@@ -300,6 +301,30 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
       expect(customPlugin?.options?.otpLength).toBe(8);
       expect(customPlugin?.options?.expiresIn).toBe(600);
       expect(customPlugin?.options?.allowedAttempts).toBe(5);
+    });
+
+    it('signs up an unknown phone number on first verification with a placeholder email, overridable', () => {
+      const auth = createAuthInstance(validEnv, {
+        phone: {
+          sendOTP: async () => {},
+        },
+      });
+
+      const phonePlugin = auth.options?.plugins?.find((p) => p.id === 'phone-number');
+      const signUp = phonePlugin?.options?.signUpOnVerification as
+        { getTempEmail: (phoneNumber: string) => string } | undefined;
+      expect(signUp).toBeDefined();
+      expect(signUp?.getTempEmail('+15551234567')).toBe('+15551234567@phone.invalid');
+
+      const customAuth = createAuthInstance(validEnv, {
+        phone: {
+          sendOTP: async () => {},
+          signUpOnVerification: { getTempEmail: (phoneNumber) => `${phoneNumber}@example.com` },
+        },
+      });
+      const customSignUp = customAuth.options?.plugins?.find((p) => p.id === 'phone-number')
+        ?.options?.signUpOnVerification as { getTempEmail: (phoneNumber: string) => string };
+      expect(customSignUp.getTempEmail('+15551234567')).toBe('+15551234567@example.com');
     });
   });
 });

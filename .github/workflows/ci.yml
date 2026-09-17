@@ -71,3 +71,30 @@ jobs:
 
       - name: Test
         run: bun run test
+
+  integration-tests:
+    name: Integration tests (wrangler dev)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Both backends run in one job: D1 against wrangler's local SQLite,
+      # Hyperdrive against the Postgres service container above.
+      INTEGRATION_BACKENDS: d1,hyperdrive
+      INTEGRATION_POSTGRES_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/bun-install
+
+      - name: Run the example Worker under wrangler dev
+        run: bun run test:integration

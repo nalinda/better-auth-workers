@@ -10,5 +10,6 @@ export type {
   CreateAuthSecondaryStorage,
   CreateAuthSessionOptions,
   HyperdriveDatabaseOption,
+  PgDriver,
 } from './auth/types';
 export type { AuthEnv, ConfigValue, ExecutionContext, KVStore } from './types';

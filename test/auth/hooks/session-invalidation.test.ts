@@ -128,6 +128,16 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
       expect(await kv.get(cacheKey)).toBeNull();
     });
 
+    it('resolves to an object, since the after-hook runner reads headers and response off the result', async () => {
+      const kv = new FakeKV();
+      const auth = callCreateAuth(buildEnv(kv), { kv });
+
+      const result = await auth.options.hooks!.after!(signOutContext(TOKEN));
+
+      expect(result).toBeDefined();
+      expect(typeof result).toBe('object');
+    });
+
     it('does nothing when the sign-out request carries no session cookie', async () => {
       const kv = new FakeKV();
       const auth = callCreateAuth(buildEnv(kv), { kv });

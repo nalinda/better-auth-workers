@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 
 import { createAuth } from '../../src/index';
 
@@ -34,16 +34,27 @@ class MockPool {
   }
 }
 
-void mock.module('pg', () => ({
-  Pool: MockPool,
-  default: { Pool: MockPool },
-}));
+// The package reaches the driver through `require('pg')` when no
+// `database.pg` is supplied. `mock.module` only intercepts ESM imports of an
+// installed package (and another test file's mock would shadow an `import`
+// here), so the CommonJS module object the package sees is patched instead.
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- must be the same module object `require('pg')` in src resolves to
+const pgModule = require('pg') as { Pool: unknown };
+const realPool = pgModule.Pool;
+
+beforeAll(() => {
+  pgModule.Pool = MockPool;
+});
+
+afterAll(() => {
+  pgModule.Pool = realPool;
+});
 
 interface CreateAuthOptions {
   basePath?: string;
   baseURL?: string;
   secret?: string;
-  database?: { hyperdrive?: unknown; d1?: unknown };
+  database?: { hyperdrive?: unknown; d1?: unknown; pg?: unknown };
   kv?: unknown;
   ctx?: { waitUntil: (promise: Promise<unknown>) => void; passThroughOnException?: () => void };
   phone?: {
@@ -106,6 +117,30 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
       expect(typeof pool.options.max).toBe('number');
       expect(pool.options.max!).toBeGreaterThan(0);
       expect(pool.options.max!).toBeLessThanOrEqual(10);
+    });
+
+    it('constructs the Pool from a pg driver passed as database.pg, as a bundled Worker must', () => {
+      const connectionString = 'postgres://user:pass@hyperdrive.local:5432/authdb';
+      const env = {
+        ...validEnv,
+        HYPERDRIVE: { connectionString },
+      };
+      const suppliedPools: MockPoolConfig[] = [];
+      class SuppliedPool {
+        end = () => Promise.resolve();
+        constructor(options: MockPoolConfig) {
+          suppliedPools.push(options);
+        }
+      }
+
+      const auth = createAuthInstance(env, {
+        database: { hyperdrive: env.HYPERDRIVE, pg: { Pool: SuppliedPool } },
+      });
+
+      expect(capturedPools).toHaveLength(0);
+      expect(suppliedPools).toHaveLength(1);
+      expect(suppliedPools[0]?.connectionString).toBe(connectionString);
+      expect(auth.options.database).toBeInstanceOf(SuppliedPool);
     });
 
     it('hands the pg Pool to Better Auth database option', () => {

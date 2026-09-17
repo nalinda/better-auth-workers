@@ -13,6 +13,16 @@ function kvSecondaryStorage(kv: KVStore): CreateAuthSecondaryStorage {
     set: (key: string, value: string, ttl?: number) =>
       kv.put(key, value, ttl ? { expirationTtl: ttl } : undefined),
     delete: (key: string) => kv.delete(key),
+    // Better Auth consumes one-shot verification values (phone OTP codes,
+    // magic-link tokens) through `getAndDelete`. KV has no atomic
+    // read-and-remove, so this is a read followed by a delete; the
+    // consume-once guarantee for OTP still holds through the code's
+    // attempt counter and expiry.
+    getAndDelete: async (key: string): Promise<string | null> => {
+      const value = await kv.get(key);
+      if (value !== null) await kv.delete(key);
+      return value;
+    },
     increment: async (key: string, ttl: number): Promise<number> => {
       const current = await kv.get(key);
       const parsed = current ? Number(current) : 0;

@@ -71,6 +71,7 @@ interface AuthInstanceLike {
       get: (key: string) => Promise<string | null>;
       set: (key: string, value: string, ttl?: number) => Promise<void>;
       delete: (key: string) => Promise<void>;
+      getAndDelete?: (key: string) => Promise<string | null>;
       increment?: (key: string, ttl: number) => Promise<number>;
     };
     session?: { cookieCache?: { enabled?: boolean } };
@@ -141,6 +142,21 @@ describe('KV secondary storage for session cache and rate limiter', () => {
       const mockKv = new FakeKV();
       const auth = callCreateAuth({ kv: mockKv }, validEnv);
       expect(auth.options.secondaryStorage).toBeDefined();
+    });
+
+    it('implements getAndDelete on secondaryStorage so one-shot verification values are consumed', async () => {
+      const mockKv = new FakeKV();
+      const auth = createAuthInstance(validEnv, { kv: mockKv });
+
+      await auth.options.secondaryStorage?.set('verification:otp', 'code', 300);
+      const consumed = await auth.options.secondaryStorage?.getAndDelete?.('verification:otp');
+      expect(consumed).toBe('code');
+      expect(mockKv.deletes).toContain('verification:otp');
+      expect(await auth.options.secondaryStorage?.get('verification:otp')).toBeNull();
+
+      const missing = await auth.options.secondaryStorage?.getAndDelete?.('verification:missing');
+      expect(missing).toBeNull();
+      expect(mockKv.deletes).not.toContain('verification:missing');
     });
 
     it('implements increment on secondaryStorage for distributed rate limiting', async () => {

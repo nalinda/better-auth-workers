@@ -7,6 +7,10 @@ export interface CreateAuthPhoneOptions {
   otpLength?: number;
   expiresIn?: number;
   allowedAttempts?: number;
+  signUpOnVerification?: {
+    getTempEmail: (phoneNumber: string) => string;
+    getTempName?: (phoneNumber: string) => string;
+  };
 }
 
 export interface CreateAuthMagicLinkOptions {
@@ -21,8 +25,16 @@ export interface CreateAuthMagicLinkOptions {
 export type HyperdriveDatabaseOption =
   Hyperdrive | { connectionString: string; [key: string]: ConfigValue };
 
+export interface PgDriver {
+  Pool: new (config: { connectionString?: string; max?: number }) => { end(): Promise<void> };
+}
+
 export interface CreateAuthDatabaseOptions {
   hyperdrive?: HyperdriveDatabaseOption;
+  // The `pg` module (`import pg from 'pg'`). Workers are bundled, so the
+  // driver has to be imported by the Worker itself for the bundler to
+  // include it; the package cannot load it on the consumer's behalf.
+  pg?: PgDriver;
   d1?: D1Database | Record<string, (arg?: string) => void>;
 }
 
@@ -30,6 +42,7 @@ export interface CreateAuthSecondaryStorage {
   get(key: string): Promise<string | null> | string | null;
   set(key: string, value: string, ttl?: number): Promise<void> | void;
   delete(key: string): Promise<void> | void;
+  getAndDelete?: (key: string) => Promise<string | null> | string | null;
   increment?: (key: string, ttl: number) => Promise<number> | number;
 }
 
