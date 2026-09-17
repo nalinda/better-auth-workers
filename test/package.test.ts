@@ -122,6 +122,23 @@ describe('Package scaffolding and metadata', () => {
     expect(types).toContain('@cloudflare/workers-types');
   });
 
+  // `AuthEnv` names the ambient KVNamespace/Hyperdrive/D1Database globals;
+  // the emitted declarations must say where they come from, and the
+  // package must admit that dependency, or a consumer without the types
+  // package sees unresolved names.
+  it('the public types carry a preserved reference to @cloudflare/workers-types', () => {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path
+    const source = fs.readFileSync(path.resolve(import.meta.dir, '../src/types.ts'), 'utf8');
+    const [firstLine] = source.split('\n', 1);
+    expect(firstLine).toBe('/// <reference types="@cloudflare/workers-types" preserve="true" />');
+  });
+
+  it('package.json declares @cloudflare/workers-types as an optional peer dependency', () => {
+    const pkg = readPackageJson();
+    expect(pkg?.peerDependencies?.['@cloudflare/workers-types']).toBeDefined();
+    expect(pkg?.peerDependenciesMeta?.['@cloudflare/workers-types']?.optional).toBe(true);
+  });
+
   it('GitHub Actions workflow triggers on push', () => {
     const workflows = readWorkflows();
     expect(workflows).toMatch(/push\s*:/);

@@ -4,7 +4,7 @@ import { createAuthMiddleware } from 'better-auth/api';
 import { type ContextRef, withHandlerContext } from '../shared/non-blocking';
 import type { AuthEnv, ConfigValue, ExecutionContext } from '../types';
 import { buildAllowedMethodsHook } from './allowed-methods';
-import { buildRateLimitConfig, buildSessionConfig, layerOptions } from './config';
+import { buildAdvancedConfig, buildRateLimitConfig, buildSessionConfig } from './config';
 import {
   resolveDatabase,
   type ResolvedDatabase,
@@ -43,12 +43,15 @@ function withEndpointContext(handler: (ctx: never) => Promise<void>): CreateAuth
       : wrapped(ctx);
 }
 
-// Our hooks run before the user's in `before` (a disallowed method is
-// rejected before the user's hook sees the request) and after the user's
-// in `after`; the user's return value is what Better Auth sees in both
-// cases. Both compositions resolve to a promise: Better Auth's hook runner
-// awaits the return value, and a bare synchronous function would make its
-// tracing wrapper return a non-promise and crash the runner's `.catch`.
+// Our hooks run before the user's in both slots: in `before` so a
+// disallowed method is rejected before the user's hook sees the request,
+// and in `after` so cache invalidation has already happened by the time a
+// user's hook runs — a user hook that throws cannot leave a session the
+// endpoint just revoked alive in the consumer cache. The user's return
+// value is what Better Auth sees. Both compositions resolve to a promise:
+// Better Auth's hook runner awaits the return value, and a bare synchronous
+// function would make its tracing wrapper return a non-promise and crash
+// the runner's `.catch`.
 function composeBefore(ours: CreateAuthHook[], user: CreateAuthHook | undefined): CreateAuthHook {
   return async (ctx: never) => {
     for (const hook of ours) await hook(ctx);
@@ -61,8 +64,8 @@ function composeBefore(ours: CreateAuthHook[], user: CreateAuthHook | undefined)
 // result when there is one, an empty one otherwise.
 function composeAfter(ours: CreateAuthHook[], user: CreateAuthHook | undefined): CreateAuthHook {
   return async (ctx: never) => {
-    const result = await user?.(ctx);
     for (const hook of ours) await hook(ctx);
+    const result = await user?.(ctx);
     return result ?? {};
   };
 }
@@ -73,18 +76,15 @@ interface OwnHooks {
 }
 
 // Composes whichever of our hooks are active with the user's
-// `hooks.before` and `hooks.after` (from `options.hooks` or
-// `options.betterAuth.hooks`). The user's hook in either slot survives
-// regardless of which of ours is active, so wiring cache invalidation never
-// drops a user `before`, and restricting methods never drops a user `after`.
+// `betterAuth.hooks.before` / `.after`. The user's hook in either slot
+// survives regardless of which of ours is active, so wiring cache
+// invalidation never drops a user `before`, and restricting methods never
+// drops a user `after`.
 function buildHooksField(
   options: CreateAuthOptions | undefined,
   ours: OwnHooks
 ): Record<string, never> | { hooks: CreateAuthHooks } {
-  const user = layerOptions<CreateAuthHooks>(
-    options?.hooks,
-    options?.betterAuth?.hooks as CreateAuthHooks | undefined
-  );
+  const user = (options?.betterAuth?.hooks ?? {}) as CreateAuthHooks;
   if (ours.before.length === 0 && ours.after.length === 0) {
     return user.before || user.after ? { hooks: user } : {};
   }
@@ -104,24 +104,6 @@ function buildOwnHooks(options: CreateAuthOptions | undefined, env: AuthEnv): Ow
   const invalidateSessionCache = buildSessionInvalidationHook(options, env);
   if (invalidateSessionCache) after.push(withEndpointContext(invalidateSessionCache));
   return { before, after };
-}
-
-// Schema validation is off by default because the schema ships as SQL
-// migrations (see migrations/) and D1/Hyperdrive have no introspection the
-// check could use. A consumer's `advanced` settings (`options.advanced`,
-// then `options.betterAuth.advanced`) are layered on top rather than
-// replacing the default, so setting e.g. `advanced.disableCSRFCheck` does
-// not silently turn the schema check back on.
-function buildAdvancedConfig(options?: CreateAuthOptions): Record<string, ConfigValue> {
-  const user = layerOptions<Record<string, ConfigValue>>(
-    options?.advanced,
-    options?.betterAuth?.advanced as Record<string, ConfigValue> | undefined
-  );
-  const userDatabase = user.database as Record<string, ConfigValue> | undefined;
-  return {
-    ...user,
-    database: { validateSchema: false, ...userDatabase },
-  };
 }
 
 interface CachedInstance {

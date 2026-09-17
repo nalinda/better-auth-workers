@@ -1,6 +1,7 @@
 import { isAPIError } from 'better-auth/api';
 
-import { sessionCacheKey } from '../shared/session-cache';
+import { bearerCredentialFromHeader } from '../shared/credentials';
+import { sessionCacheKey, sessionTokenOf } from '../shared/session-cache';
 import type { AuthEnv, KVStore } from '../types';
 import { resolveKv } from './kv';
 import type { CreateAuthOptions } from './types';
@@ -51,11 +52,17 @@ interface HookContext {
   ) => Promise<string | null | undefined> | string | null | undefined;
 }
 
+// Session-authenticated routes that may delete every session of the caller
+// (`/change-password` does so when `revokeOtherSessions` is set). The
+// password-reset routes are not here: they identify the user through a
+// one-time token rather than a session, so their entries expire on their
+// own — the README says so.
 const CURRENT_USER_PATHS = new Set([
   '/revoke-sessions',
   '/revoke-other-sessions',
   '/delete-user',
   '/delete-user/callback',
+  '/change-password',
 ]);
 
 // Admin routes that delete every session of the user named in the body:
@@ -80,23 +87,13 @@ const pendingTokens = new WeakMap<object, string[]>();
 
 // Our `hooks.before` runs before the bearer plugin's, which is what turns
 // `Authorization: Bearer …` into the session cookie, so a bearer caller is
-// read off the header here the way that plugin does: the value is either
-// the bare token or the signed `<token>.<signature>` form (possibly
-// URL-encoded). The token is only ever used to look the session up, so an
-// unsigned or forged value resolves to nothing.
+// read off the header here, with the same parsing the session client uses.
+// The token is only ever used to look the session up, so an unsigned or
+// forged value resolves to nothing.
 function bearerSessionToken(ctx: HookContext): string | undefined {
   const header = ctx.request?.headers.get('authorization') ?? ctx.headers?.get('authorization');
-  if (!header || header.slice(0, 7).toLowerCase() !== 'bearer ') return;
-  let value = header.slice(7).trim();
-  if (value.includes('%')) {
-    try {
-      value = decodeURIComponent(value);
-    } catch {
-      return;
-    }
-  }
-  const [token] = value.split('.', 1);
-  return token || undefined;
+  const credential = bearerCredentialFromHeader(header);
+  return credential ? sessionTokenOf(credential) || undefined : undefined;
 }
 
 async function currentSessionToken(

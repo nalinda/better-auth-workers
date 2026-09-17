@@ -1,3 +1,5 @@
+/// <reference types="@cloudflare/workers-types" preserve="true" />
+
 // The bindings createAuth reads. Extend it (`interface Env extends AuthEnv`)
 // with whatever else the Worker binds; there is no index signature, so the
 // package's own bindings stay exactly typed.

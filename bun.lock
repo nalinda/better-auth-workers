@@ -21,11 +21,13 @@
         "wrangler": "^4.0.0",
       },
       "peerDependencies": {
+        "@cloudflare/workers-types": ">=4.0.0",
         "better-auth": "^1.7.0",
         "hono": "^4.0.0",
         "pg": "^8.0.0",
       },
       "optionalPeers": [
+        "@cloudflare/workers-types",
         "hono",
         "pg",
       ],

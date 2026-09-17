@@ -44,11 +44,15 @@
     "prepare": "husky && bun node_modules/@serendibyte-co/eslint-config/hooks/fix-hooks-path.sh"
   },
   "peerDependencies": {
+    "@cloudflare/workers-types": ">=4.0.0",
     "better-auth": "^1.7.0",
     "hono": "^4.0.0",
     "pg": "^8.0.0"
   },
   "peerDependenciesMeta": {
+    "@cloudflare/workers-types": {
+      "optional": true
+    },
     "hono": {
       "optional": true
     },

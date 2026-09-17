@@ -32,9 +32,10 @@ export function sessionCredentialFromCookie(
 // The bearer plugin accepts the bare token or the signed cookie value,
 // which a client may send URL-encoded (its base64 signature carries `=`).
 // The credential is normalised to the decoded form, so the same credential
-// is recognised however a client encodes it.
-export function sessionCredentialFromAuthorizationHeader(request: Request): string | undefined {
-  const header = request.headers.get('authorization');
+// is recognised however a client encodes it. This is the one place the
+// `Authorization` header is parsed: the session client and the auth
+// Worker's invalidation hook both go through it.
+export function bearerCredentialFromHeader(header: string | null | undefined): string | undefined {
   if (!header) return;
   const [scheme, token] = header.split(' ', 2);
   if (!scheme || !token || scheme.toLowerCase() !== 'bearer') return;
@@ -44,4 +45,8 @@ export function sessionCredentialFromAuthorizationHeader(request: Request): stri
   } catch {
     return;
   }
+}
+
+export function sessionCredentialFromAuthorizationHeader(request: Request): string | undefined {
+  return bearerCredentialFromHeader(request.headers.get('authorization'));
 }

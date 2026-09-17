@@ -46,30 +46,8 @@ export interface CreateAuthSecondaryStorage {
   increment?: (key: string, ttl: number) => Promise<number> | number;
 }
 
-export interface CreateAuthRateLimitOptions {
-  enabled?: boolean;
-  window?: number;
-  max?: number;
-  storage?: 'memory' | 'database' | 'secondary-storage';
-  customRules?: Record<string, ConfigValue>;
-  [key: string]: ConfigValue;
-}
-
-export interface CreateAuthCookieCacheOptions {
-  enabled?: boolean;
-  maxAge?: number;
-  [key: string]: ConfigValue;
-}
-
-export interface CreateAuthSessionOptions {
-  cookieCache?: CreateAuthCookieCacheOptions;
-  storeSessionInDatabase?: boolean;
-  [key: string]: ConfigValue;
-}
-
-// A Better Auth `hooks.before` / `hooks.after` handler. The context is
-// Better Auth's endpoint context; it is left loose here so a consumer can
-// pass a handler built with `createAuthMiddleware` or a plain function.
+// A Better Auth `hooks.before` / `hooks.after` handler as configured
+// through `betterAuth.hooks`; the package composes its own hooks around it.
 export type CreateAuthHook = (ctx: never) => unknown;
 
 export interface CreateAuthHooks {
@@ -99,9 +77,7 @@ export interface CreateAuthOptions {
   bearer?: boolean;
   allowedMethods?: Array<'phone' | 'google' | 'magic-link'>;
   plugins?: BetterAuthPlugin[];
-  rateLimit?: CreateAuthRateLimitOptions;
-  session?: CreateAuthSessionOptions;
-  hooks?: CreateAuthHooks;
-  advanced?: Record<string, ConfigValue>;
+  // The single escape hatch: any Better Auth option (`session`, `rateLimit`,
+  // `hooks`, `advanced`, ...). Merged last, so it can override anything.
   betterAuth?: Record<string, ConfigValue>;
 }

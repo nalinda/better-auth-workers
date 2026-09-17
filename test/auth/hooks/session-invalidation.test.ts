@@ -202,6 +202,7 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
       '/revoke-other-sessions',
       '/delete-user',
       '/delete-user/callback',
+      '/change-password',
     ])(
       '%s clears every cached session of the signed-in user, after the revocation',
       async (path) => {

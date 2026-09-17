@@ -110,7 +110,7 @@ describe('KV secondary storage for session cache and rate limiter', () => {
     it('rate-limits with a 10-second window on a KV that enforces the minimum TTL', async () => {
       const kv = new FakeKV();
       const rateLimit = { enabled: true, window: 10, max: 1 };
-      const auth = createAuth(buildEnv(), { kv, rateLimit });
+      const auth = createAuth(buildEnv(), { kv, betterAuth: { rateLimit } });
 
       const first = await auth.handler(okRequest('198.51.100.44'));
       const second = await auth.handler(okRequest('198.51.100.44'));
@@ -170,8 +170,8 @@ describe('KV secondary storage for session cache and rate limiter', () => {
       const request = () =>
         new Request(`${VALID_BASE_URL}/api/auth/ok`, { headers: { 'x-forwarded-for': clientIp } });
 
-      const auth1 = createAuth(buildEnv(), { kv: sharedKv, rateLimit });
-      const auth2 = createAuth(buildEnv(), { kv: sharedKv, rateLimit });
+      const auth1 = createAuth(buildEnv(), { kv: sharedKv, betterAuth: { rateLimit } });
+      const auth2 = createAuth(buildEnv(), { kv: sharedKv, betterAuth: { rateLimit } });
       expect(auth1).not.toBe(auth2);
 
       const first = await auth1.handler(request());
@@ -192,8 +192,8 @@ describe('KV secondary storage for session cache and rate limiter', () => {
       const request = () =>
         new Request(`${VALID_BASE_URL}/api/auth/ok`, { headers: { 'x-forwarded-for': clientIp } });
 
-      const auth1 = createAuth(buildEnv(), { kv: new FakeKV(), rateLimit });
-      const auth2 = createAuth(buildEnv(), { kv: new FakeKV(), rateLimit });
+      const auth1 = createAuth(buildEnv(), { kv: new FakeKV(), betterAuth: { rateLimit } });
+      const auth2 = createAuth(buildEnv(), { kv: new FakeKV(), betterAuth: { rateLimit } });
 
       const first = await auth1.handler(request());
       const second = await auth1.handler(request());

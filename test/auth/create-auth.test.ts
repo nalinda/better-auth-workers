@@ -1,6 +1,7 @@
 import { describe, expect, it, mock } from 'bun:test';
 
 import { type AuthEnv, type AuthInstance, createAuth } from '../../src/index';
+import { sessionCacheKey } from '../../src/shared/session-cache';
 import {
   buildEnv,
   createMockD1,
@@ -54,7 +55,7 @@ describe('Memoisation', () => {
         basePath: '/auth',
         phone: { sendOTP: () => {} },
         plugins: [{ id: 'audit' }],
-        session: { cookieCache: { maxAge: 60 } },
+        betterAuth: { session: { cookieCache: { maxAge: 60 } } },
       });
     expect(build()).toBe(build());
   });
@@ -195,7 +196,10 @@ describe('Merge order and defaults', () => {
       await Promise.resolve();
     });
     const env = buildEnv({ AUTH_KV: undefined as unknown as KVNamespace });
-    const auth = createAuth(env, { secondaryStorage: new FakeKV() as never, hooks: { before } });
+    const auth = createAuth(env, {
+      secondaryStorage: new FakeKV() as never,
+      betterAuth: { hooks: { before } },
+    });
 
     await auth.handler(getSession());
 
@@ -267,61 +271,28 @@ describe('Plugin configuration', () => {
   });
 });
 
-describe('Passthrough options share one merge rule: default, top-level, then betterAuth, field by field', () => {
-  it('rateLimit: betterAuth.rateLimit layers on options.rateLimit on the KV default', () => {
-    const auth = createAuth(buildEnv(), {
-      rateLimit: { max: 5, window: 10 },
-      betterAuth: { rateLimit: { window: 30 } },
-    });
+describe('betterAuth is the single escape hatch, layered over the package defaults', () => {
+  it('rateLimit: betterAuth.rateLimit keeps the KV storage default unless it overrides it', () => {
+    const auth = createAuth(buildEnv(), { betterAuth: { rateLimit: { max: 5, window: 30 } } });
     expect(auth.options.rateLimit).toEqual({ storage: 'secondary-storage', max: 5, window: 30 });
+
+    const memory = createAuth(buildEnv(), { betterAuth: { rateLimit: { storage: 'memory' } } });
+    expect(memory.options.rateLimit?.storage).toBe('memory');
   });
 
-  it('session: betterAuth.session layers on options.session on the cookie-cache default', () => {
-    const auth = createAuth(buildEnv(), {
-      session: { expiresIn: 100, updateAge: 10 },
-      betterAuth: { session: { updateAge: 20 } },
-    });
-    expect(auth.options.session).toEqual({
-      expiresIn: 100,
-      updateAge: 20,
-      cookieCache: { enabled: true },
-    });
+  it('session: betterAuth.session keeps the cookie-cache default unless it overrides it', () => {
+    const auth = createAuth(buildEnv(), { betterAuth: { session: { expiresIn: 100 } } });
+    expect(auth.options.session).toEqual({ expiresIn: 100, cookieCache: { enabled: true } });
   });
 
-  it('advanced: betterAuth.advanced layers on options.advanced without re-enabling schema validation', () => {
+  it('advanced: betterAuth.advanced keeps schema validation off unless it overrides it', () => {
     const auth = createAuth(buildEnv(), {
-      advanced: { disableCSRFCheck: true, cookiePrefix: 'a' },
       betterAuth: { advanced: { cookiePrefix: 'b' } },
     });
     expect(auth.options.advanced).toEqual({
-      disableCSRFCheck: true,
       cookiePrefix: 'b',
       database: { validateSchema: false },
     });
-  });
-
-  it('hooks: a before from options.hooks and an after from betterAuth.hooks both run', async () => {
-    const calls: string[] = [];
-    const auth = createAuth(buildEnv(), {
-      hooks: {
-        before: async () => {
-          await Promise.resolve();
-          calls.push('before');
-        },
-      },
-      betterAuth: {
-        hooks: {
-          after: async () => {
-            await Promise.resolve();
-            calls.push('after');
-          },
-        },
-      },
-    });
-
-    await auth.handler(getSession());
-
-    expect(calls).toEqual(['before', 'after']);
   });
 });
 
@@ -331,7 +302,7 @@ describe('Hook composition', () => {
       await Promise.resolve();
     });
     // KV on, allowedMethods off: only our `after` hook is active.
-    const auth = createAuth(buildEnv(), { hooks: { before } });
+    const auth = createAuth(buildEnv(), { betterAuth: { hooks: { before } } });
 
     await auth.handler(getSession());
 
@@ -348,12 +319,48 @@ describe('Hook composition', () => {
     const auth = createAuth(env, {
       secondaryStorage: new FakeKV() as never,
       allowedMethods: ['google'],
-      hooks: { after },
+      betterAuth: { hooks: { after } },
     });
 
     await auth.handler(getSession());
 
     expect(after).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs the package’s after hook before the user’s, so a throwing user hook cannot skip invalidation', async () => {
+    const kv = new FakeKV();
+    const cookieToken = 'session-token-xyz';
+    kv.store.set(sessionCacheKey(cookieToken), JSON.stringify({ credentials: [], session: {} }));
+    const auth = createAuth(buildEnv({ AUTH_KV: kv.asBinding() }), {
+      kv,
+      betterAuth: {
+        hooks: {
+          after: () => {
+            throw new Error('consumer after hook failed');
+          },
+        },
+      },
+    });
+    // A sign-out endpoint context, as Better Auth hands it to `hooks.after`.
+    const ctx = {
+      path: '/sign-out',
+      context: {
+        secret: VALID_SECRET,
+        authCookies: { sessionToken: { name: 'better-auth.session_token' } },
+        returned: { success: true },
+      },
+      getSignedCookie: () => Promise.resolve(cookieToken),
+    };
+
+    let thrown: unknown;
+    try {
+      await auth.options.hooks!.after!(ctx as never);
+    } catch (error) {
+      thrown = error;
+    }
+    expect((thrown as Error).message).toBe('consumer after hook failed');
+
+    expect(kv.deletes).toEqual([sessionCacheKey(cookieToken)]);
   });
 
   it('keeps both user hooks when both of ours are active', async () => {
