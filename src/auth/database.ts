@@ -110,16 +110,22 @@ export function resolveDatabase(
 const DATABASE_MISSING_MESSAGE =
   'database is required: specify options.database.hyperdrive or options.database.d1 (or provide HYPERDRIVE or DB on env)';
 
+const PG_DRIVER_MISSING_MESSAGE =
+  "database.pg is required with Hyperdrive: import pg from 'pg' and pass database: { hyperdrive, pg } (a bundled Worker only includes modules it imports itself)";
+
 // Reports the same "is a database resolvable" question as resolveDatabase,
 // without instantiating a pg Pool, so validation can run without the
-// side effect of opening a connection.
+// side effect of opening a connection. A Hyperdrive binding without a pg
+// driver to open it is reported here too, instead of surfacing as Better
+// Auth's opaque adapter error on the first request.
 export function databaseProblem(
   options?: CreateAuthOptions,
   envObj?: Partial<AuthEnv>
 ): string | undefined {
+  if (resolveHyperdriveConnectionString(options, envObj) !== undefined) {
+    return resolvePgPoolClass(options) ? undefined : PG_DRIVER_MISSING_MESSAGE;
+  }
   const hasDatabase =
-    resolveHyperdriveConnectionString(options, envObj) !== undefined ||
-    resolveD1Binding(options, envObj) !== undefined ||
-    Boolean(options?.betterAuth?.database);
+    resolveD1Binding(options, envObj) !== undefined || Boolean(options?.betterAuth?.database);
   return hasDatabase ? undefined : DATABASE_MISSING_MESSAGE;
 }

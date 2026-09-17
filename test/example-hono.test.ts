@@ -381,7 +381,9 @@ describe('Second Worker with service binding and session validation', () => {
     };
 
     const req = new Request('http://localhost/me', {
-      headers: { cookie: 'better-auth.session_token=tok-1' },
+      // A Better Auth cookie is `<token>.<signature>`; the stub auth Worker
+      // above accepts it, the way the real one would after verifying it.
+      headers: { cookie: 'better-auth.session_token=tok-1.c2lnbmF0dXJl' },
     });
     const res = await app.fetch(req, stubEnv, stubCtx().ctx);
 

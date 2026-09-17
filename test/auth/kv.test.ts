@@ -11,6 +11,9 @@ function secondaryStorageOf(auth: AuthInstance): SecondaryStorage {
   return storage;
 }
 
+const okRequest = (clientIp: string) =>
+  new Request(`${VALID_BASE_URL}/api/auth/ok`, { headers: { 'x-forwarded-for': clientIp } });
+
 describe('KV secondary storage for session cache and rate limiter', () => {
   describe('Secondary storage wiring over KV namespace', () => {
     it('wires options.kv as Better Auth secondaryStorage with get, set with TTL, and delete', async () => {
@@ -78,6 +81,41 @@ describe('KV secondary storage for session cache and rate limiter', () => {
 
       const count2 = await storage.increment('test-limit-key', 60);
       expect(count2).toBe(2);
+    });
+  });
+
+  describe('KV minimum TTL', () => {
+    // Better Auth's rate limiter calls increment(key, window) with windows
+    // as short as 10 seconds; Cloudflare KV rejects expirationTtl < 60.
+    it('raises a sub-60s TTL to the KV minimum on increment and set', async () => {
+      const mockKv = new FakeKV();
+      const storage = secondaryStorageOf(createAuth(buildEnv(), { kv: mockKv }));
+
+      expect(await storage.increment('rate:key', 10)).toBe(1);
+      await storage.set('short-lived', 'value', 5);
+
+      expect(mockKv.puts.map((put) => put.options?.expirationTtl)).toEqual([60, 60]);
+    });
+
+    it('passes a TTL at or above the minimum through unchanged', async () => {
+      const mockKv = new FakeKV();
+      const storage = secondaryStorageOf(createAuth(buildEnv(), { kv: mockKv }));
+
+      await storage.increment('rate:key', 60);
+      await storage.set('long-lived', 'value', 300);
+
+      expect(mockKv.puts.map((put) => put.options?.expirationTtl)).toEqual([60, 300]);
+    });
+
+    it('rate-limits with a 10-second window on a KV that enforces the minimum TTL', async () => {
+      const kv = new FakeKV();
+      const rateLimit = { enabled: true, window: 10, max: 1 };
+      const auth = createAuth(buildEnv(), { kv, rateLimit });
+
+      const first = await auth.handler(okRequest('198.51.100.44'));
+      const second = await auth.handler(okRequest('198.51.100.44'));
+
+      expect([first.status, second.status]).toEqual([200, 429]);
     });
   });
 

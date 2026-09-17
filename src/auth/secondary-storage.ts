@@ -1,12 +1,22 @@
+import { KV_MIN_TTL_SECONDS } from '../shared/session-cache';
 import type { AuthEnv, KVStore } from '../types';
 import { resolveKv } from './kv';
 import type { CreateAuthOptions, CreateAuthSecondaryStorage } from './types';
 
+// Cloudflare KV rejects `expirationTtl` below 60 seconds with a 400, and
+// Better Auth passes shorter TTLs routinely: its rate limiter's default and
+// sign-in windows are 10 seconds. A short TTL is raised to the minimum; the
+// value then outlives its window in KV, which only ever makes a limit
+// slightly stricter, never looser.
+function kvExpiry(ttl?: number): { expirationTtl: number } | undefined {
+  if (!ttl || ttl <= 0) return;
+  return { expirationTtl: Math.max(Math.ceil(ttl), KV_MIN_TTL_SECONDS) };
+}
+
 function kvSecondaryStorage(kv: KVStore): CreateAuthSecondaryStorage {
   return {
     get: (key: string) => kv.get(key),
-    set: (key: string, value: string, ttl?: number) =>
-      kv.put(key, value, ttl ? { expirationTtl: ttl } : undefined),
+    set: (key: string, value: string, ttl?: number) => kv.put(key, value, kvExpiry(ttl)),
     delete: (key: string) => kv.delete(key),
     // Better Auth consumes one-shot verification values (phone OTP codes,
     // magic-link tokens) through `getAndDelete`. KV has no atomic
@@ -22,7 +32,7 @@ function kvSecondaryStorage(kv: KVStore): CreateAuthSecondaryStorage {
       const current = await kv.get(key);
       const parsed = current ? Number(current) : 0;
       const next = (Number.isNaN(parsed) ? 0 : Math.trunc(parsed)) + 1;
-      await kv.put(key, String(next), ttl ? { expirationTtl: ttl } : undefined);
+      await kv.put(key, String(next), kvExpiry(ttl));
       return next;
     },
   };

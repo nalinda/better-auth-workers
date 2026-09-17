@@ -81,8 +81,8 @@ function buildHooksField(
   options: CreateAuthOptions | undefined,
   ours: OwnHooks
 ): Record<string, never> | { hooks: CreateAuthHooks } {
-  if (ours.before.length === 0 && ours.after.length === 0) return {};
   const user = (options?.betterAuth?.hooks ?? options?.hooks) as CreateAuthHooks | undefined;
+  if (ours.before.length === 0 && ours.after.length === 0) return user ? { hooks: user } : {};
   const hooks: CreateAuthHooks = {};
   if (ours.before.length > 0 || user?.before)
     hooks.before = composeBefore(ours.before, user?.before);
@@ -141,9 +141,13 @@ function setCachedInstance(env: object, optionsKey: string, cached: CachedInstan
   envMap.set(optionsKey, cached);
 }
 
-// Package defaults, then `options`, then what the package resolves and
-// wires (baseURL, secret, storage, plugins, hooks), then the `betterAuth`
-// escape hatch last so it can override anything.
+// Only what Better Auth accepts reaches it: the package's own options
+// (`kv`, `phone`, `allowedMethods`, the raw `database` option, ...) are
+// consumed here and never spread through, so they cannot surface on
+// `auth.options` or be misread as Better Auth fields. Package defaults,
+// then what the package resolves and wires (baseURL, secret, storage,
+// plugins, hooks), then the `betterAuth` escape hatch last so it can
+// override anything.
 function buildAuthConfig(
   env: AuthEnv,
   options: CreateAuthOptions | undefined,
@@ -159,8 +163,7 @@ function buildAuthConfig(
   const rateLimit = buildRateLimitConfig(options, secondaryStorage);
 
   return {
-    basePath: '/api/auth',
-    ...options,
+    basePath: options?.basePath ?? '/api/auth',
     baseURL,
     secret,
     ...(database !== undefined && { database }),

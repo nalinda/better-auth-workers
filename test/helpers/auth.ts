@@ -11,7 +11,8 @@ export const VALID_SECRET = 'test-secret-at-least-32-chars-long-1234567890';
 export const VALID_BASE_URL = 'https://auth.example.com';
 
 // A minimal double for the Cloudflare KV binding, recording every call so
-// tests can assert on what was read, written and deleted.
+// tests can assert on what was read, written and deleted. Like the real
+// binding, it rejects an `expirationTtl` under 60 seconds.
 export class FakeKV implements KVStore {
   readonly store = new Map<string, string>();
   readonly gets: string[] = [];
@@ -24,6 +25,15 @@ export class FakeKV implements KVStore {
   }
 
   put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void> {
+    if (options?.expirationTtl !== undefined && options.expirationTtl < 60) {
+      return Promise.reject(
+        new Error(
+          'KV PUT failed: 400 Invalid expiration_ttl of ' +
+            String(options.expirationTtl) +
+            '. Expiration TTL must be at least 60.'
+        )
+      );
+    }
     this.store.set(key, value);
     this.puts.push({ key, value, options });
     return Promise.resolve();

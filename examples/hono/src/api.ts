@@ -12,12 +12,12 @@ interface Env {
   AUTH_KV: KVNamespace;
 }
 
-type Variables = {
-  sessions: SessionClient;
-  session: SessionData;
+type AppEnv = {
+  Bindings: Env;
+  Variables: { sessions: SessionClient; session: SessionData };
 };
 
-const app = new Hono<{ Bindings: Env; Variables: Variables }>();
+const app = new Hono<AppEnv>();
 
 app.use('*', async (c, next) => {
   const sessions = createSessionClient({
@@ -31,7 +31,7 @@ app.use('*', async (c, next) => {
 
 app.get(
   '/me',
-  (c, next) => requireSession({ client: c.get('sessions') })(c as never, next),
+  (c, next) => requireSession<AppEnv>({ client: c.get('sessions') })(c, next),
   (c) => c.json(c.get('session').user)
 );
 

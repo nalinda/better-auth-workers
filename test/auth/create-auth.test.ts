@@ -3,6 +3,7 @@ import { describe, expect, it, mock } from 'bun:test';
 import { type AuthEnv, type AuthInstance, createAuth } from '../../src/index';
 import {
   buildEnv,
+  createMockD1,
   createMockExecutionContext,
   FakeKV,
   postJSON,
@@ -167,6 +168,40 @@ describe('baseURL and secret resolution', () => {
 });
 
 describe('Merge order and defaults', () => {
+  it('passes only Better Auth options through, never the package’s own', () => {
+    const { ctx } = createMockExecutionContext();
+    const auth = createAuth(buildEnv(), {
+      ctx,
+      phone: { sendOTP: () => {} },
+      google: { clientId: 'id', clientSecret: 'secret' },
+      bearer: true,
+      allowedMethods: ['phone'],
+      database: { d1: createMockD1().asBinding() },
+    });
+    const options = auth.options as Record<string, unknown>;
+
+    for (const key of ['kv', 'ctx', 'phone', 'magicLink', 'google', 'bearer', 'allowedMethods']) {
+      expect(options).not.toHaveProperty(key);
+    }
+    // The raw `{ d1 }` option is resolved to the binding, not passed through.
+    expect(typeof (options.database as { prepare?: unknown }).prepare).toBe('function');
+    expect(options.plugins).toBeDefined();
+    expect(options.secondaryStorage).toBeDefined();
+    expect(options.socialProviders).toBeDefined();
+  });
+
+  it('still passes a user hooks field through when none of the package hooks are active', async () => {
+    const before = mock(async (_ctx: unknown) => {
+      await Promise.resolve();
+    });
+    const env = buildEnv({ AUTH_KV: undefined as unknown as KVNamespace });
+    const auth = createAuth(env, { secondaryStorage: new FakeKV() as never, hooks: { before } });
+
+    await auth.handler(getSession());
+
+    expect(before).toHaveBeenCalledTimes(1);
+  });
+
   it('applies package default basePath of /api/auth when not specified', () => {
     const auth = createAuth(validEnv, {});
     expect(auth.options.basePath).toBe('/api/auth');

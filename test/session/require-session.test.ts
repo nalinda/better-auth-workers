@@ -23,9 +23,29 @@ function clientReturning(session: SessionData | null): SessionClient {
   return { get: () => Promise.resolve(session) };
 }
 
+// The README's shape: an app with its own bindings and a per-request
+// `sessions` variable, with the middleware typed against it — no casts.
+// `bun run ts-check` compiles this, so a regression in how the middleware
+// composes with a typed app turns this file red at compile time.
+type AppEnv = {
+  Bindings: { AUTH: Fetcher; AUTH_KV: KVNamespace };
+  Variables: { sessions: SessionClient; session: SessionData };
+};
+
 function buildApp(client: SessionClient, canAccess?: (session: SessionData) => boolean) {
-  const app = new Hono<{ Variables: { session: SessionData } }>();
-  app.get('/protected', requireSession({ client, predicate: canAccess }), (c) =>
+  const app = new Hono<AppEnv>();
+  app.use('*', async (c, next) => {
+    c.set('sessions', client);
+    await next();
+  });
+  app.get(
+    '/protected',
+    (c, next) =>
+      requireSession<AppEnv>({ client: c.get('sessions'), predicate: canAccess })(c, next),
+    (c) => c.json({ userId: c.get('session').user.id })
+  );
+  // The direct form, for a client that is not read off the context.
+  app.get('/direct', requireSession({ client, predicate: canAccess }), (c) =>
     c.json({ userId: c.get('session').user.id })
   );
   return app;
@@ -85,5 +105,16 @@ describe('requireSession Hono middleware', () => {
 
     expect(response.status).toBe(200);
     expect(body.userId).toBe('user-1');
+  });
+
+  it('works as a directly mounted middleware on an app with bindings and other variables', async () => {
+    const app = buildApp(clientReturning(makeSession()));
+
+    const ok = await app.request('/direct');
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as { userId: string }).userId).toBe('user-1');
+
+    const denied = await buildApp(clientReturning(null)).request('/direct');
+    expect(denied.status).toBe(401);
   });
 });

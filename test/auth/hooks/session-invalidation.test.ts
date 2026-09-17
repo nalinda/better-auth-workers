@@ -1,7 +1,8 @@
+import { APIError } from 'better-auth';
 import { describe, expect, it } from 'bun:test';
 
 import { type AuthInstance, createAuth } from '../../../src/index';
-import { sessionCacheKey } from '../../../src/shared/session-cache';
+import { sessionCacheKey, sessionCacheKeysFor } from '../../../src/shared/session-cache';
 import { buildEnv, FakeKV, VALID_SECRET } from '../../helpers/auth';
 
 // Better Auth invokes `options.hooks.before` / `options.hooks.after` with the
@@ -26,6 +27,7 @@ interface FakeEndpointContext {
       ) => Promise<{ session: SessionRecord; user: { id: string } } | null>;
       listSessions: (userId: string) => Promise<SessionRecord[]>;
     };
+    returned?: unknown;
   };
   getSignedCookie: (name: string, secret: string) => Promise<string | undefined>;
 }
@@ -34,13 +36,19 @@ const SESSION_COOKIE_NAME = 'better-auth.session_token';
 const TOKEN = 'session-token-abc123';
 const USER_ID = 'user-1';
 const USER_TOKENS = ['session-token-abc123', 'session-token-def456', 'session-token-ghi789'];
+const ADMIN_TOKEN = 'admin-session-token';
+const UNAUTHORIZED = new APIError('UNAUTHORIZED', { message: 'Unauthorized' });
 
 interface FakeStore {
   sessions: Map<string, { token: string; userId: string }>;
+  listCalls: string[];
 }
 
 function fakeStore(): FakeStore {
-  return { sessions: new Map(USER_TOKENS.map((token) => [token, { token, userId: USER_ID }])) };
+  const sessions = new Map<string, { token: string; userId: string }>();
+  for (const token of USER_TOKENS) sessions.set(token, { token, userId: USER_ID });
+  sessions.set(ADMIN_TOKEN, { token: ADMIN_TOKEN, userId: 'admin-1' });
+  return { sessions, listCalls: [] };
 }
 
 function endpointContext(
@@ -59,35 +67,46 @@ function endpointContext(
           const found = store.sessions.get(token);
           return Promise.resolve(found ? { session: { token }, user: { id: found.userId } } : null);
         },
-        listSessions: (userId) =>
-          Promise.resolve(
+        listSessions: (userId) => {
+          store.listCalls.push(userId);
+          return Promise.resolve(
             store.sessions
               .values()
               .filter((session) => session.userId === userId)
               .map(({ token }) => ({ token }))
               .toArray()
-          ),
+          );
+        },
       },
     },
     getSignedCookie: () => Promise.resolve(options.cookieToken),
   };
 }
 
-// Plays the dispatcher: before hook, the route's own revocation, after hook.
+// Plays the dispatcher: before hook, the route itself (whose result, an
+// APIError when it failed, lands on `context.returned`), after hook.
 async function dispatch(
   auth: AuthInstance,
   ctx: FakeEndpointContext,
-  revoke: () => void
+  route: () => unknown
 ): Promise<void> {
   await auth.options.hooks?.before?.(ctx as never);
-  revoke();
+  ctx.context.returned = route();
   await auth.options.hooks?.after?.(ctx as never);
 }
 
-function seededKv(tokens: string[]): FakeKV {
+// A session can be cached under its bearer form and its signed-cookie form
+// (see src/shared/session-cache.ts); the seed and the expectations cover both.
+async function cacheKeysFor(tokens: string[]): Promise<string[]> {
+  const keys = await Promise.all(tokens.map((token) => sessionCacheKeysFor(token, VALID_SECRET)));
+  return keys.flat();
+}
+
+async function seededKv(tokens: string[]): Promise<FakeKV> {
   const kv = new FakeKV();
-  for (const token of tokens) {
-    kv.store.set(sessionCacheKey(token), JSON.stringify({ session: { token } }));
+  const keys = await cacheKeysFor(tokens);
+  for (const key of keys) {
+    kv.store.set(key, JSON.stringify({ session: { token: key } }));
   }
   return kv;
 }
@@ -104,15 +123,18 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
     });
 
     it('deletes the session-client cache entry for the signed-out session token', async () => {
-      const kv = seededKv([TOKEN]);
+      const kv = await seededKv([TOKEN]);
       const auth = authWith(kv);
 
       await auth.options.hooks!.after!(
         endpointContext(fakeStore(), '/sign-out', { cookieToken: TOKEN }) as never
       );
 
-      expect(kv.deletes).toContain(sessionCacheKey(TOKEN));
-      expect(await kv.get(sessionCacheKey(TOKEN))).toBeNull();
+      expect(new Set(kv.deletes)).toEqual(new Set(await cacheKeysFor([TOKEN])));
+      const keys = await cacheKeysFor([TOKEN]);
+      for (const key of keys) {
+        expect(await kv.get(key)).toBeNull();
+      }
     });
 
     it('resolves to an object, since the after-hook runner reads headers and response off the result', async () => {
@@ -138,18 +160,18 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
 
   describe('single-session revocation', () => {
     it('deletes the cache entry for the token in /revoke-session’s body', async () => {
-      const kv = seededKv([TOKEN]);
+      const kv = await seededKv([TOKEN]);
       const auth = authWith(kv);
 
       await auth.options.hooks!.after!(
         endpointContext(fakeStore(), '/revoke-session', { body: { token: TOKEN } }) as never
       );
 
-      expect(kv.deletes).toEqual([sessionCacheKey(TOKEN)]);
+      expect(new Set(kv.deletes)).toEqual(new Set(await cacheKeysFor([TOKEN])));
     });
 
     it('deletes the cache entry for the sessionToken in /admin/revoke-user-session’s body', async () => {
-      const kv = seededKv([TOKEN]);
+      const kv = await seededKv([TOKEN]);
       const auth = authWith(kv);
 
       await auth.options.hooks!.after!(
@@ -158,7 +180,7 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
         }) as never
       );
 
-      expect(kv.deletes).toEqual([sessionCacheKey(TOKEN)]);
+      expect(new Set(kv.deletes)).toEqual(new Set(await cacheKeysFor([TOKEN])));
     });
   });
 
@@ -171,7 +193,7 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
     ])(
       '%s clears every cached session of the signed-in user, after the revocation',
       async (path) => {
-        const kv = seededKv(USER_TOKENS);
+        const kv = await seededKv(USER_TOKENS);
         const store = fakeStore();
         const auth = authWith(kv);
         const ctx = endpointContext(store, path, { cookieToken: TOKEN });
@@ -183,17 +205,16 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
         });
 
         expect(deletesAtRevocation).toBe(0);
-        expect(new Set(kv.deletes)).toEqual(
-          new Set(USER_TOKENS.map((token) => sessionCacheKey(token)))
-        );
-        for (const token of USER_TOKENS) {
-          expect(await kv.get(sessionCacheKey(token))).toBeNull();
+        expect(new Set(kv.deletes)).toEqual(new Set(await cacheKeysFor(USER_TOKENS)));
+        const keys = await cacheKeysFor(USER_TOKENS);
+        for (const key of keys) {
+          expect(await kv.get(key)).toBeNull();
         }
       }
     );
 
     it('does nothing when the request carries no session', async () => {
-      const kv = seededKv(USER_TOKENS);
+      const kv = await seededKv(USER_TOKENS);
       const store = fakeStore();
       const auth = authWith(kv);
 
@@ -203,7 +224,7 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
     });
 
     it('only clears the sessions of the signed-in user', async () => {
-      const kv = seededKv([...USER_TOKENS, 'other-user-token']);
+      const kv = await seededKv([...USER_TOKENS, 'other-user-token']);
       const store = fakeStore();
       store.sessions.set('other-user-token', { token: 'other-user-token', userId: 'user-2' });
       const auth = authWith(kv);
@@ -214,8 +235,11 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
         () => {}
       );
 
-      expect(kv.deletes).not.toContain(sessionCacheKey('other-user-token'));
-      expect(kv.deletes).toHaveLength(USER_TOKENS.length);
+      const otherKeys = await cacheKeysFor(['other-user-token']);
+      for (const key of otherKeys) {
+        expect(kv.deletes).not.toContain(key);
+      }
+      expect(new Set(kv.deletes)).toEqual(new Set(await cacheKeysFor(USER_TOKENS)));
     });
   });
 
@@ -223,11 +247,11 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
     it.each(['/admin/revoke-user-sessions', '/admin/remove-user'])(
       '%s clears every cached session of body.userId, after the revocation',
       async (path) => {
-        const kv = seededKv(USER_TOKENS);
+        const kv = await seededKv(USER_TOKENS);
         const store = fakeStore();
         const auth = authWith(kv);
         const ctx = endpointContext(store, path, {
-          cookieToken: 'admin-session-token',
+          cookieToken: ADMIN_TOKEN,
           body: { userId: USER_ID },
         });
         let deletesAtRevocation = -1;
@@ -238,16 +262,70 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
         });
 
         expect(deletesAtRevocation).toBe(0);
-        expect(new Set(kv.deletes)).toEqual(
-          new Set(USER_TOKENS.map((token) => sessionCacheKey(token)))
-        );
+        expect(new Set(kv.deletes)).toEqual(new Set(await cacheKeysFor(USER_TOKENS)));
+      }
+    );
+
+    it.each(['/admin/revoke-user-sessions', '/admin/remove-user'])(
+      '%s does not look up or clear anything for an unauthenticated caller',
+      async (path) => {
+        const kv = await seededKv(USER_TOKENS);
+        const store = fakeStore();
+        const auth = authWith(kv);
+        const ctx = endpointContext(store, path, { body: { userId: USER_ID } });
+
+        await dispatch(auth, ctx, () => UNAUTHORIZED);
+
+        expect(store.listCalls).toHaveLength(0);
+        expect(kv.deletes).toHaveLength(0);
       }
     );
   });
 
+  describe('a revocation the endpoint rejected', () => {
+    it('does not evict the named session when /revoke-session fails', async () => {
+      const kv = await seededKv([TOKEN]);
+      const store = fakeStore();
+      const auth = authWith(kv);
+
+      await dispatch(
+        auth,
+        endpointContext(store, '/revoke-session', { body: { token: TOKEN } }),
+        () => UNAUTHORIZED
+      );
+
+      expect(kv.deletes).toHaveLength(0);
+      expect(await kv.get(sessionCacheKey(TOKEN))).not.toBeNull();
+    });
+
+    it('does not evict the collected sessions when an authenticated admin call is refused', async () => {
+      const kv = await seededKv(USER_TOKENS);
+      const store = fakeStore();
+      const auth = authWith(kv);
+      const ctx = endpointContext(store, '/admin/revoke-user-sessions', {
+        cookieToken: ADMIN_TOKEN,
+        body: { userId: USER_ID },
+      });
+
+      await dispatch(auth, ctx, () => new APIError('FORBIDDEN', { message: 'Forbidden' }));
+
+      expect(kv.deletes).toHaveLength(0);
+    });
+
+    it('does not evict the cached session when sign-out fails', async () => {
+      const kv = await seededKv([TOKEN]);
+      const auth = authWith(kv);
+      const ctx = endpointContext(fakeStore(), '/sign-out', { cookieToken: TOKEN });
+
+      await dispatch(auth, ctx, () => UNAUTHORIZED);
+
+      expect(kv.deletes).toHaveLength(0);
+    });
+  });
+
   describe('requests that neither sign out nor revoke a session', () => {
     it('leaves an unrelated cached session entry in place', async () => {
-      const kv = seededKv([TOKEN]);
+      const kv = await seededKv([TOKEN]);
       const store = fakeStore();
       const auth = authWith(kv);
 

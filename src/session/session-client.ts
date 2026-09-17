@@ -1,7 +1,7 @@
 import {
   DEFAULT_COOKIE_NAME,
-  sessionTokenFromAuthorizationHeader,
-  sessionTokenFromCookie,
+  sessionCredentialFromAuthorizationHeader,
+  sessionCredentialFromCookie,
 } from '../shared/credentials';
 import { KV_MIN_TTL_SECONDS, sessionCacheKey } from '../shared/session-cache';
 import type { JsonValue, KVStore } from '../types';
@@ -50,11 +50,12 @@ export function createSessionClient(options: SessionClientOptions): SessionClien
 
   return {
     get: async (request) => {
-      const token =
-        sessionTokenFromCookie(request, cookieName) ?? sessionTokenFromAuthorizationHeader(request);
-      if (!token) return null;
+      const credential =
+        sessionCredentialFromCookie(request, cookieName) ??
+        sessionCredentialFromAuthorizationHeader(request);
+      if (!credential) return null;
 
-      const cacheKey = sessionCacheKey(token);
+      const cacheKey = sessionCacheKey(credential);
       const cached = await readCachedSession(options.kv, cacheKey);
       if (cached) return cached;
 

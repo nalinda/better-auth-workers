@@ -1,53 +1,25 @@
 import { describe, expect, it, mock } from 'bun:test';
 
-import { createSessionClient } from '../../src/client';
+import {
+  createSessionClient,
+  type SessionClient,
+  type SessionClientOptions,
+} from '../../src/client';
+import { FakeKV } from '../helpers/auth';
 
-interface SessionClientOptions {
-  auth: { fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> };
-  kv: FakeKV;
-  basePath?: string;
-}
-
-interface SessionResult {
-  session: { token: string; expiresAt: string; [key: string]: unknown };
-  user: { id: string; email?: string; [key: string]: unknown };
-}
-
-// Typed wrapper so the test compiles against the current stub signature and the final one alike
-const buildSessionClient = (
-  options: SessionClientOptions
-): { get: (req: Request) => Promise<SessionResult | null> } =>
-  (
-    createSessionClient as unknown as (o: SessionClientOptions) => {
-      get: (req: Request) => Promise<SessionResult | null>;
-    }
-  )(options);
-
-class FakeKV {
-  readonly store = new Map<string, string>();
-  readonly puts: Array<{ key: string; value: string; options?: { expirationTtl?: number } }> = [];
-
-  get(key: string): Promise<string | null> {
-    return Promise.resolve(this.store.get(key) ?? null);
-  }
-
-  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void> {
-    this.store.set(key, value);
-    this.puts.push({ key, value, options });
-    return Promise.resolve();
-  }
-
-  delete(key: string): Promise<void> {
-    this.store.delete(key);
-    return Promise.resolve();
-  }
-}
+// The real exported types, so a breaking change to createSessionClient's
+// signature turns this file red at compile time.
+const buildSessionClient = (options: SessionClientOptions): SessionClient =>
+  createSessionClient(options);
 
 const BASE_PATH = '/auth';
 const TOKEN = 'sess_abc123';
 const SIGNED_TOKEN = `${TOKEN}.c2lnbmF0dXJl`;
 const VALID_COOKIE = `better-auth.session_token=${encodeURIComponent(SIGNED_TOKEN)}`;
 const INVALID_COOKIE = 'better-auth.session_token=nope.invalid';
+// The genuine token with a signature the auth Worker never produced.
+const FORGED_SIGNED_TOKEN = `${TOKEN}.Zm9yZ2Vk`;
+const FORGED_COOKIE = `better-auth.session_token=${encodeURIComponent(FORGED_SIGNED_TOKEN)}`;
 
 function makeSessionRequest(): Request {
   return new Request('https://api.example.com/me', { headers: { cookie: VALID_COOKIE } });
@@ -164,7 +136,7 @@ describe('createSessionClient verifies sessions over a service binding with a KV
       expect(result!.user.id).toBe('user-1');
     });
 
-    it('resolves the same session a cookie-carrying request would, keyed by the same cache entry', async () => {
+    it('resolves the same session a cookie-carrying request would', async () => {
       const expiresAt = new Date(Date.now() + 3_600_000);
       const kv = new FakeKV();
       const cookieClient = buildSessionClient({
@@ -278,6 +250,41 @@ describe('createSessionClient verifies sessions over a service binding with a KV
       expect(primary.fetch).toHaveBeenCalledTimes(1);
       expect(consumer.fetch).toHaveBeenCalledTimes(0);
       expect(result?.session.token).toBe(TOKEN);
+    });
+  });
+
+  describe('cookie signatures', () => {
+    it('does not serve a cookie with a forged signature from an entry a genuine request warmed', async () => {
+      const { binding, fetch } = fakeAuthBinding(new Date(Date.now() + 3_600_000));
+      const kv = new FakeKV();
+      const client = buildSessionClient({ auth: binding, kv, basePath: BASE_PATH });
+
+      const genuine = await client.get(makeSessionRequest());
+      expect(genuine?.session.token).toBe(TOKEN);
+      expect(kv.store.size).toBe(1);
+
+      const forged = await client.get(
+        new Request('https://api.example.com/me', { headers: { cookie: FORGED_COOKIE } })
+      );
+
+      // The forged cookie missed the cache and was refused by the auth Worker.
+      expect(forged).toBeNull();
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(kv.store.size).toBe(1);
+    });
+
+    it('ignores a cookie that carries a bare token without a signature', async () => {
+      const { binding, fetch } = fakeAuthBinding(new Date(Date.now() + 3_600_000));
+      const client = buildSessionClient({ auth: binding, kv: new FakeKV(), basePath: BASE_PATH });
+
+      const result = await client.get(
+        new Request('https://api.example.com/me', {
+          headers: { cookie: `better-auth.session_token=${TOKEN}` },
+        })
+      );
+
+      expect(result).toBeNull();
+      expect(fetch).toHaveBeenCalledTimes(0);
     });
   });
 

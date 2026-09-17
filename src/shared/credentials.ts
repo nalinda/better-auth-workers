@@ -15,18 +15,22 @@ function readCookie(cookieHeader: string, name: string): string | undefined {
   }
 }
 
-// Better Auth signs cookies as `<token>.<signature>`; the session is keyed by the bare token.
-export function sessionTokenFromCookie(request: Request, cookieName: string): string | undefined {
+// Better Auth signs cookies as `<token>.<signature>`. The whole signed value
+// is the credential: the bare token is never trusted on its own, since only
+// the auth Worker can check the signature.
+export function sessionCredentialFromCookie(
+  request: Request,
+  cookieName: string
+): string | undefined {
   const cookieHeader = request.headers.get('cookie');
   if (!cookieHeader) return;
   const signed = readCookie(cookieHeader, cookieName);
-  if (!signed) return;
-  const [token] = signed.split('.', 1);
-  return token || undefined;
+  if (!signed || !signed.includes('.')) return;
+  return signed;
 }
 
 // The bearer plugin sends the bare (unsigned) token, unlike the cookie.
-export function sessionTokenFromAuthorizationHeader(request: Request): string | undefined {
+export function sessionCredentialFromAuthorizationHeader(request: Request): string | undefined {
   const header = request.headers.get('authorization');
   if (!header) return;
   const [scheme, token] = header.split(' ', 2);

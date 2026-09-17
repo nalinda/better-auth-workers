@@ -227,6 +227,25 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
     });
   });
 
+  describe('pg driver is required', () => {
+    it('throws a clear error at creation when neither database.pg nor a loadable pg module provides a Pool', () => {
+      const env = { ...validEnv, HYPERDRIVE: hyperdrive(DEFAULT_CONNECTION_STRING) };
+      const withoutPool = pgModule as { Pool: unknown; default?: unknown };
+      const savedDefault = withoutPool.default;
+      withoutPool.Pool = undefined;
+      withoutPool.default = undefined;
+      try {
+        expect(() => createAuth(env, { database: { hyperdrive: env.HYPERDRIVE } })).toThrow(
+          /database\.pg is required with Hyperdrive/
+        );
+        expect(capturedPools).toHaveLength(0);
+      } finally {
+        withoutPool.Pool = MockPool;
+        withoutPool.default = savedDefault;
+      }
+    });
+  });
+
   describe('Instance is single-use', () => {
     it('refuses a second handler call on the same instance instead of using the released pool', async () => {
       const env = { ...validEnv, HYPERDRIVE: hyperdrive(DEFAULT_CONNECTION_STRING) };
