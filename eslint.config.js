@@ -6,7 +6,7 @@ export default [
   },
   ...node({
     tsconfigRootDir: import.meta.dirname,
-    files: ['src/**/*.ts', 'examples/**/*.ts'],
+    files: ['src/**/*.ts', 'examples/**/*.ts', 'test/**/*.ts'],
     runtime: 'worker',
   }),
 ];
