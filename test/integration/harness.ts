@@ -5,7 +5,17 @@ import path from 'node:path';
 
 import { SQL } from 'bun';
 
+import { type PostgresProxy, startPostgresProxy } from './postgres-proxy';
+
 export type Backend = 'd1' | 'hyperdrive';
+
+export interface Counters {
+  // Statements sent to the primary store (D1 statements, or Postgres
+  // statements on the wire for the Hyperdrive backend).
+  primaryQueries: number;
+  // KV reads through the auth Worker's AUTH_KV binding.
+  kvReads: number;
+}
 
 export interface DevServer {
   baseUrl: string;
@@ -15,12 +25,14 @@ export interface DevServer {
     timeoutMs?: number,
     isWanted?: (match: RegExpExecArray) => boolean
   ) => Promise<RegExpExecArray>;
+  counters: () => Promise<Counters>;
   stop: () => Promise<void>;
 }
 
 const rootDir = path.resolve(import.meta.dir, '../..');
 const wranglerBin = path.resolve(rootDir, 'node_modules/.bin/wrangler');
 const exampleConfig = path.resolve(rootDir, 'examples/hono/wrangler.jsonc');
+const authWrapperEntry = path.resolve(import.meta.dir, 'auth/index.ts');
 const gatewayConfig = path.resolve(import.meta.dir, 'gateway.wrangler.jsonc');
 const apiConfig = path.resolve(import.meta.dir, 'api.wrangler.jsonc');
 const persistRoot = path.resolve(import.meta.dir, '.wrangler');
@@ -167,6 +179,28 @@ async function provisionPostgres(): Promise<PostgresHandle> {
   };
 }
 
+// The auth Worker under test is the example's own wrangler config (name,
+// bindings, environments, flags) with only `main` pointed at the counting
+// wrapper in ./auth, so the config the example ships stays what is exercised.
+function writeAuthWorkerConfig(persistTo: string): string {
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path
+  const raw = fs.readFileSync(exampleConfig, 'utf8');
+  const config = JSON.parse(
+    raw
+      .replaceAll(/\/\/[^\n]*/g, '')
+      .replaceAll(/\/\*[\s\S]*?\*\//g, '')
+      .replaceAll(/,(\s*[}\]])/g, '$1')
+  ) as Record<string, unknown>;
+  delete config.$schema;
+  config.main = authWrapperEntry;
+  const configPath = path.join(persistTo, 'auth.wrangler.json');
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- test-owned persist directory
+  fs.mkdirSync(persistTo, { recursive: true });
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- test-owned persist directory
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  return configPath;
+}
+
 function applyD1Migration(persistTo: string): void {
   const result = spawnSync(
     wranglerBin,
@@ -195,6 +229,7 @@ function spawnWrangler(
   backend: Backend,
   port: number,
   persistTo: string,
+  authConfig: string,
   extraEnv: Record<string, string>
 ): ChildProcess {
   return spawn(
@@ -204,7 +239,7 @@ function spawnWrangler(
       '-c',
       gatewayConfig,
       '-c',
-      exampleConfig,
+      authConfig,
       '-c',
       apiConfig,
       '--env',
@@ -242,15 +277,18 @@ export async function startDevServer(backend: Backend): Promise<DevServer> {
 
   const extraEnv: Record<string, string> = {};
   let postgres: PostgresHandle | undefined;
+  let proxy: PostgresProxy | undefined;
   if (backend === 'hyperdrive') {
     postgres = await provisionPostgres();
-    extraEnv.CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE = postgres.connectionString;
+    proxy = await startPostgresProxy(postgres.connectionString);
+    extraEnv.CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE = proxy.connectionString;
   } else {
     applyD1Migration(persistTo);
   }
+  const authConfig = writeAuthWorkerConfig(persistTo);
 
   const port = await freePort();
-  const child = spawnWrangler(backend, port, persistTo, extraEnv);
+  const child = spawnWrangler(backend, port, persistTo, authConfig, extraEnv);
 
   let buffer = '';
   const state: { exited?: { code: number | null; signal: NodeJS.Signals | null } } = {};
@@ -293,6 +331,7 @@ export async function startDevServer(backend: Backend): Promise<DevServer> {
       }
       if (!hasExited()) child.kill('SIGKILL');
     }
+    await proxy?.close();
     await postgres?.stop();
   };
 
@@ -314,10 +353,17 @@ export async function startDevServer(backend: Backend): Promise<DevServer> {
     }
   }
 
+  const counters = async (): Promise<Counters> => {
+    const response = await fetch(`${baseUrl}/__auth/counters`);
+    const body = (await response.json()) as Counters;
+    return proxy ? { ...body, primaryQueries: proxy.statements() } : body;
+  };
+
   return {
     baseUrl,
     output: () => buffer,
     waitForOutput,
+    counters,
     stop,
   };
 }
