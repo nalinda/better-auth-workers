@@ -8,7 +8,7 @@ dist/
 *.tsbuildinfo
 coverage/
 
-# AI/agent tooling stays out of git; each machine runs /dev-harness:setup
+# Local tooling config stays out of git; set up per machine
 .agents/
 .claude/
 .worktrees/
