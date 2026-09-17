@@ -282,6 +282,25 @@ describe.each(requestedBackends())('example Worker under wrangler dev (%s)', (ba
     expect(afterSignOut.status).toBe(401);
   });
 
+  it('a bearer-authenticated sign-out ends the session and invalidates the session client cache', async () => {
+    const phoneNumber = nextPhone();
+    const verified = await signInWithPhone(server, phoneNumber);
+    const token = verified.headers.get('set-auth-token');
+    expect(token).toBeTruthy();
+    const authorization = `Bearer ${token as string}`;
+
+    const warm = await fetch(`${server.baseUrl}/me`, { headers: { authorization } });
+    expect(warm.status).toBe(200);
+
+    const signedOut = await postJson(server, '/auth/sign-out', {}, { authorization });
+    expect(signedOut.status).toBe(200);
+
+    const { body } = await getSession(server, { authorization });
+    expect(body).toBeNull();
+    const afterSignOut = await fetch(`${server.baseUrl}/me`, { headers: { authorization } });
+    expect(afterSignOut.status).toBe(401);
+  });
+
   it('a revocation from elsewhere is seen even when the client still holds the cookie-cache cookie', async () => {
     // The browser keeps its full jar (session token + Better Auth's signed
     // session_data cookie). The session is revoked from another device;

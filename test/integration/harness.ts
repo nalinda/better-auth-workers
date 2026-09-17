@@ -110,6 +110,24 @@ function dockerBin(): string {
   return bin;
 }
 
+// `docker run -d` returns before the container has necessarily published
+// its port; poll until it is running and the mapping is visible instead of
+// reading it once and failing the whole collection on a slow start.
+function waitForMappedPort(docker: string, name: string): string | undefined {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const state = spawnSync(docker, ['inspect', '-f', '{{.State.Running}}', name], {
+      encoding: 'utf8',
+    });
+    if (state.status === 0 && state.stdout.trim() === 'true') {
+      const port = spawnSync(docker, ['port', name, '5432'], { encoding: 'utf8' });
+      const match = /:(\d+)\s*$/m.exec(port.stdout);
+      if (match) return match[1];
+    }
+    Bun.sleepSync(250);
+  }
+}
+
 function startPostgresContainer(): { adminUrl: string; stop: () => Promise<void> } {
   const docker = dockerBin();
   const name = `better-auth-workers-it-${crypto.randomUUID().slice(0, 8)}-${String(Date.now())}`;
@@ -132,14 +150,13 @@ function startPostgresContainer(): { adminUrl: string; stop: () => Promise<void>
   if (run.status !== 0) {
     throw new Error(`docker run failed: ${run.stderr}`);
   }
-  const port = spawnSync(docker, ['port', name, '5432'], { encoding: 'utf8' });
-  const match = /:(\d+)\s*$/m.exec(port.stdout);
-  if (!match) {
+  const mappedPort = waitForMappedPort(docker, name);
+  if (!mappedPort) {
     spawnSync(docker, ['rm', '-f', name]);
-    throw new Error(`could not read mapped port: ${port.stdout} ${port.stderr}`);
+    throw new Error(`container ${name} did not publish port 5432 in time`);
   }
   return {
-    adminUrl: `postgresql://postgres:postgres@127.0.0.1:${match[1]}/postgres`,
+    adminUrl: `postgresql://postgres:postgres@127.0.0.1:${mappedPort}/postgres`,
     stop: () => {
       spawnSync(docker, ['rm', '-f', name]);
       return Promise.resolve();

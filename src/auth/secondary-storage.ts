@@ -28,14 +28,45 @@ function kvSecondaryStorage(kv: KVStore): CreateAuthSecondaryStorage {
       if (value !== null) await kv.delete(key);
       return value;
     },
+    // Better Auth's rate limiter expects a fixed window: the TTL applies
+    // when the counter is created and later increments must not extend it,
+    // or a client that keeps retrying at the limit would never leave 429.
+    // KV cannot increment while preserving a TTL, so the window's end is
+    // stored with the count and re-applied as the remaining TTL on every
+    // write; a counter whose window has passed starts over at 1.
     increment: async (key: string, ttl: number): Promise<number> => {
-      const current = await kv.get(key);
-      const parsed = current ? Number(current) : 0;
-      const next = (Number.isNaN(parsed) ? 0 : Math.trunc(parsed)) + 1;
-      await kv.put(key, String(next), kvExpiry(ttl));
-      return next;
+      const now = Date.now();
+      const current = parseCounter(await kv.get(key));
+      const entry: RateLimitCounter =
+        current && current.expiresAt > now
+          ? { count: current.count + 1, expiresAt: current.expiresAt }
+          : { count: 1, expiresAt: now + Math.max(ttl, 1) * 1000 };
+      await kv.put(key, JSON.stringify(entry), kvExpiry((entry.expiresAt - now) / 1000));
+      return entry.count;
     },
   };
+}
+
+interface RateLimitCounter {
+  count: number;
+  expiresAt: number;
+}
+
+function parseCounter(raw: string | null): RateLimitCounter | undefined {
+  if (!raw) return;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      typeof (parsed as RateLimitCounter).count === 'number' &&
+      typeof (parsed as RateLimitCounter).expiresAt === 'number'
+    ) {
+      return parsed as RateLimitCounter;
+    }
+  } catch {
+    // an unrecognised value (e.g. a bare number from an older release) starts a fresh window
+  }
 }
 
 export function buildSecondaryStorage(

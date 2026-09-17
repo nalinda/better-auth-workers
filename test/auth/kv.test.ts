@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, setSystemTime } from 'bun:test';
 
 import { type AuthInstance, createAuth } from '../../src/index';
 import { buildEnv, FakeKV, VALID_BASE_URL } from '../helpers/auth';
@@ -81,6 +81,61 @@ describe('KV secondary storage for session cache and rate limiter', () => {
 
       const count2 = await storage.increment('test-limit-key', 60);
       expect(count2).toBe(2);
+    });
+  });
+
+  describe('Rate-limit counters are fixed windows', () => {
+    afterEach(() => {
+      setSystemTime();
+    });
+
+    it('does not extend the window on later increments and resets once it has passed', async () => {
+      const mockKv = new FakeKV();
+      const storage = secondaryStorageOf(createAuth(buildEnv(), { kv: mockKv }));
+      const start = new Date('2026-09-17T12:00:00Z');
+
+      setSystemTime(start);
+      expect(await storage.increment('rate:key', 100)).toBe(1);
+
+      // Halfway through the window: the count grows, but the entry is
+      // written with the remaining TTL, not a fresh full window.
+      setSystemTime(new Date(start.getTime() + 50_000));
+      expect(await storage.increment('rate:key', 100)).toBe(2);
+      expect(mockKv.puts.map((put) => put.options?.expirationTtl)).toEqual([100, 60]);
+
+      // Just past the window: a fresh window starts at 1, not 3.
+      setSystemTime(new Date(start.getTime() + 101_000));
+      expect(await storage.increment('rate:key', 100)).toBe(1);
+      expect(mockKv.puts.at(-1)?.options?.expirationTtl).toBe(100);
+    });
+
+    it('lets a client that keeps retrying at the limit through once the window passes', async () => {
+      const kv = new FakeKV();
+      const auth = createAuth(buildEnv(), {
+        kv,
+        betterAuth: { rateLimit: { enabled: true, window: 100, max: 1 } },
+      });
+      const start = new Date('2026-09-17T12:00:00Z');
+
+      const statusAt = async (seconds: number) => {
+        setSystemTime(new Date(start.getTime() + seconds * 1000));
+        const res = await auth.handler(okRequest('198.51.100.45'));
+        return res.status;
+      };
+
+      expect(await statusAt(0)).toBe(200);
+      expect(await statusAt(30)).toBe(429);
+      expect(await statusAt(60)).toBe(429);
+      expect(await statusAt(90)).toBe(429);
+      expect(await statusAt(101)).toBe(200);
+    });
+
+    it('treats a counter left by an older release (a bare number) as a fresh window', async () => {
+      const mockKv = new FakeKV();
+      mockKv.store.set('rate:legacy', '7');
+      const storage = secondaryStorageOf(createAuth(buildEnv(), { kv: mockKv }));
+
+      expect(await storage.increment('rate:legacy', 60)).toBe(1);
     });
   });
 
@@ -188,11 +243,12 @@ describe('KV secondary storage for session cache and rate limiter', () => {
       const third = await auth2.handler(request());
 
       expect([first.status, second.status, third.status]).toEqual([200, 200, 429]);
-      const counters = sharedKv.store
+      const counts = sharedKv.store
         .values()
-        .filter((value) => value === '3')
+        .map((value) => (JSON.parse(value) as { count?: number }).count)
+        .filter((count) => count === 3)
         .toArray();
-      expect(counters).toHaveLength(1);
+      expect(counts).toHaveLength(1);
     });
 
     it('does not share counters between instances on different KV namespaces', async () => {

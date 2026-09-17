@@ -127,6 +127,37 @@ function authWith(kv: FakeKV, hasBearer = false): AuthInstance {
   return createAuth(buildEnv({ AUTH_KV: kv.asBinding() }), { kv, bearer: hasBearer });
 }
 
+// Better Auth keeps sessions in secondary storage (our KV) under the
+// bare token as `{ session, user }`; seeding one lets the real
+// /sign-out route run end to end against the mock D1, including the
+// bearer plugin's header-to-cookie rewrite that the after hook relies on.
+function seedBetterAuthSession(kv: FakeKV, token: string): void {
+  const now = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+  kv.store.set(
+    token,
+    JSON.stringify({
+      session: {
+        id: 'sess-1',
+        token,
+        userId: USER_ID,
+        expiresAt,
+        createdAt: now,
+        updatedAt: now,
+      },
+      user: {
+        id: USER_ID,
+        email: 'user@example.com',
+        name: 'User',
+        emailVerified: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    })
+  );
+  kv.store.set(sessionCacheKey(token), JSON.stringify({ credentials: [], session: {} }));
+}
+
 describe('createAuth wires session cache invalidation into the Better Auth instance', () => {
   describe('sign-out', () => {
     it('registers an after-hook on the instance when a KV namespace is configured', () => {
@@ -167,6 +198,29 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
       await auth.options.hooks!.after!(endpointContext(fakeStore(), '/sign-out') as never);
 
       expect(kv.deletes).toHaveLength(0);
+    });
+  });
+
+  describe('sign-out over HTTP, through the real handler', () => {
+    it('clears the consumer cache entry when signing out with a bearer token', async () => {
+      const kv = new FakeKV();
+      seedBetterAuthSession(kv, TOKEN);
+      const auth = createAuth(buildEnv({ AUTH_KV: kv.asBinding() }), {
+        kv,
+        bearer: true,
+        betterAuth: { logger: { disabled: true } },
+      });
+
+      const res = await auth.handler(
+        new Request('https://auth.example.com/api/auth/sign-out', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+          body: '{}',
+        })
+      );
+
+      expect(res.status).toBe(200);
+      expect(kv.deletes).toContain(sessionCacheKey(TOKEN));
     });
   });
 
