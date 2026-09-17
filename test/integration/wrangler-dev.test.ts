@@ -108,7 +108,22 @@ async function authCalls(server: DevServer): Promise<number> {
   return body.count;
 }
 
-describe.each(requestedBackends())('example Worker under wrangler dev (%s)', (backend: Backend) => {
+const backends = requestedBackends();
+
+// A run with no backend requested must not read as "integration tests
+// passed": say so, and leave a visible skip in the summary.
+if (backends.length === 0) {
+  console.warn(
+    '[integration] no backend requested, nothing ran. Set INTEGRATION_BACKENDS=d1,hyperdrive (see README > Contributing > Integration tests).'
+  );
+  describe('example Worker under wrangler dev', () => {
+    it.skip('is skipped: set INTEGRATION_BACKENDS=d1,hyperdrive to run it', () => {
+      expect(backends).not.toHaveLength(0);
+    });
+  });
+}
+
+describe.each(backends)('example Worker under wrangler dev (%s)', (backend: Backend) => {
   const started = startDevServer(backend);
   let server: DevServer;
 

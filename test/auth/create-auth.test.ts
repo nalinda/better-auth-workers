@@ -358,6 +358,10 @@ describe('Hook composition', () => {
       context: {
         secret: VALID_SECRET,
         authCookies: { sessionToken: { name: 'better-auth.session_token' } },
+        internalAdapter: {
+          findSession: () => Promise.resolve(null),
+          listSessions: () => Promise.resolve([]),
+        },
         returned: { success: true },
       },
       getSignedCookie: () => Promise.resolve(cookieToken),

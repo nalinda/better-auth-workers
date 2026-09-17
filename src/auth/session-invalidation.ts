@@ -85,6 +85,33 @@ function bodyTargetUserId(ctx: HookContext): string | undefined {
 // context Better Auth hands to both hooks of one dispatch.
 const pendingTokens = new WeakMap<object, string[]>();
 
+// The hooks read Better Auth internals that carry no stability promise:
+// `context.internalAdapter.findSession` / `.listSessions` and
+// `context.authCookies.sessionToken.name`. Verified against better-auth
+// 1.7.x; if a later release within the peer range reshapes them, this
+// fails loudly on the first revocation instead of silently leaving
+// consumer caches stale. test/auth/hooks/session-invalidation.test.ts also
+// checks the shape against the real instance context.
+const INTERNALS_MISMATCH_MESSAGE =
+  'better-auth-workers: the Better Auth endpoint context no longer has the shape this package relies on for session-cache invalidation (context.internalAdapter.findSession/listSessions, context.authCookies.sessionToken.name, getSignedCookie). Check the installed better-auth version against the peer range; invalidation cannot proceed.';
+
+function hasInvalidationShape(ctx: unknown): boolean {
+  const candidate = ctx as Partial<HookContext> | null | undefined;
+  if (typeof candidate?.getSignedCookie !== 'function') return false;
+  const context = candidate.context as Partial<HookContext['context']> | undefined;
+  if (typeof context?.secret !== 'string') return false;
+  const cookieName = (
+    context.authCookies as Partial<HookContext['context']['authCookies']> | undefined
+  )?.sessionToken?.name;
+  if (typeof cookieName !== 'string') return false;
+  const adapter = context.internalAdapter as Partial<InternalAdapter> | undefined;
+  return typeof adapter?.findSession === 'function' && typeof adapter.listSessions === 'function';
+}
+
+export function assertInvalidationInternals(ctx: unknown): asserts ctx is HookContext {
+  if (!hasInvalidationShape(ctx)) throw new Error(INTERNALS_MISMATCH_MESSAGE);
+}
+
 // Our `hooks.before` runs before the bearer plugin's, which is what turns
 // `Authorization: Bearer …` into the session cookie, so a bearer caller is
 // read off the header here, with the same parsing the session client uses.
@@ -127,6 +154,13 @@ async function resolveTargetUserId(
   return isAdminRoute ? target : caller.user.id;
 }
 
+const SINGLE_TOKEN_PATHS = new Set([
+  '/sign-out',
+  '/admin/stop-impersonating',
+  '/revoke-session',
+  '/admin/revoke-user-session',
+]);
+
 async function resolveSingleToken(ctx: HookContext): Promise<string | undefined> {
   // By `after`, the bearer plugin has already turned the header into the
   // cookie. `/admin/stop-impersonating` deletes the impersonation session,
@@ -153,6 +187,8 @@ export function buildSessionTokenCollector(
 }
 
 async function collectSessionTokens(ctx: HookContext, canUseBearer: boolean): Promise<void> {
+  if (!BODY_USER_PATHS.has(ctx.path) && !CURRENT_USER_PATHS.has(ctx.path)) return;
+  assertInvalidationInternals(ctx);
   const userId = await resolveTargetUserId(ctx, canUseBearer);
   if (!userId) return;
   const sessions = await ctx.context.internalAdapter.listSessions(userId);
@@ -194,6 +230,8 @@ export function buildSessionInvalidationHook(
       await invalidateTokens(kv, collected);
       return;
     }
+    if (!SINGLE_TOKEN_PATHS.has(ctx.path)) return;
+    assertInvalidationInternals(ctx);
     const token = await resolveSingleToken(ctx);
     if (!token) return;
     await invalidateTokens(kv, [token]);

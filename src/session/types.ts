@@ -28,7 +28,24 @@ export interface CachedSessionEntry {
 }
 
 export interface SessionClient {
+  // Resolves to the session, or `null` when the auth Worker answered that
+  // there is none. Throws `SessionUnavailableError` when it could not get an
+  // answer at all (service binding unreachable, auth Worker 5xx), so an
+  // outage is never mistaken for "not signed in".
   get: (request: Request) => Promise<SessionData | null>;
+}
+
+// Thrown by `SessionClient.get` when the auth Worker gave no answer: the
+// service binding threw or returned a 5xx. Distinct from `null`, which is a
+// real negative answer.
+export class SessionUnavailableError extends Error {
+  readonly status: number | undefined;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = 'SessionUnavailableError';
+    this.status = status;
+  }
 }
 
 export interface SessionClientOptions {
@@ -42,9 +59,11 @@ export interface SessionClientOptions {
   cookieName?: string;
 }
 
-export interface RequireSessionOptions {
-  // A SessionClient built with createSessionClient, or anything with the same shape.
-  client: SessionClient;
+export interface RequireSessionOptions<C = unknown> {
+  // A SessionClient built with createSessionClient (or anything with the
+  // same shape), or a function returning one from the request context — for
+  // a client an earlier middleware put on a Hono variable.
+  client: SessionClient | ((c: C) => SessionClient);
   // Optional role check run against the resolved session; returning false yields a 403.
   predicate?: (session: SessionData) => boolean | Promise<boolean>;
 }

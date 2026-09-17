@@ -1,6 +1,7 @@
 import { APIError } from 'better-auth';
 import { describe, expect, it } from 'bun:test';
 
+import { assertInvalidationInternals } from '../../../src/auth/session-invalidation';
 import { type AuthInstance, createAuth } from '../../../src/index';
 import { sessionCacheKey } from '../../../src/shared/session-cache';
 import { buildEnv, FakeKV, VALID_SECRET } from '../../helpers/auth';
@@ -157,6 +158,53 @@ function seedBetterAuthSession(kv: FakeKV, token: string): void {
   );
   kv.store.set(sessionCacheKey(token), JSON.stringify({ credentials: [], session: {} }));
 }
+
+describe('the Better Auth internals the hooks rely on', () => {
+  // The hooks read `context.internalAdapter.findSession` / `.listSessions`,
+  // `context.authCookies.sessionToken.name` and `getSignedCookie` off the
+  // endpoint context. These are internals with no stability promise; this
+  // pins them against the installed better-auth so a bump that moves them
+  // fails here, by name, rather than silently leaving caches stale.
+  it('are present on the real instance context in the installed better-auth', async () => {
+    const auth = authWith(new FakeKV());
+    const context = await auth.$context;
+    const adapter = context.internalAdapter as unknown as Record<string, unknown>;
+
+    expect(typeof adapter.findSession).toBe('function');
+    expect(typeof adapter.listSessions).toBe('function');
+    expect(typeof context.authCookies.sessionToken.name).toBe('string');
+    expect(typeof context.secret).toBe('string');
+    expect(() =>
+      assertInvalidationInternals({ ...endpointContext(fakeStore(), '/sign-out'), context })
+    ).not.toThrow();
+  });
+
+  it('fail loudly, not silently, when the context has lost that shape', async () => {
+    const kv = await seededKv([TOKEN]);
+    const auth = authWith(kv);
+    const ctx = endpointContext(fakeStore(), '/sign-out', { cookieToken: TOKEN });
+    delete (ctx.context as Partial<typeof ctx.context>).internalAdapter;
+
+    let thrown: unknown;
+    try {
+      await auth.options.hooks!.after!(ctx as never);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect((thrown as Error).message).toMatch(/no longer has the shape this package relies on/);
+    expect(kv.deletes).toHaveLength(0);
+  });
+
+  it('are not demanded on routes the hooks do not act on', async () => {
+    const auth = authWith(new FakeKV());
+    const ctx = endpointContext(fakeStore(), '/get-session', { cookieToken: TOKEN });
+    delete (ctx.context as Partial<typeof ctx.context>).internalAdapter;
+
+    const result = await auth.options.hooks!.after!(ctx as never);
+    expect(result).toBeDefined();
+  });
+});
 
 describe('createAuth wires session cache invalidation into the Better Auth instance', () => {
   describe('sign-out', () => {

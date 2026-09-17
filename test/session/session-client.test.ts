@@ -4,6 +4,7 @@ import {
   createSessionClient,
   type SessionClient,
   type SessionClientOptions,
+  SessionUnavailableError,
 } from '../../src/client';
 import { sessionCacheKey } from '../../src/shared/session-cache';
 import { FakeKV } from '../helpers/auth';
@@ -48,6 +49,14 @@ function sessionPayload(expiresAt: Date) {
       name: 'Alice',
     },
   };
+}
+
+async function caught(client: SessionClient): Promise<unknown> {
+  try {
+    await client.get(makeSessionRequest());
+  } catch (error) {
+    return error;
+  }
 }
 
 function toRequest(input: RequestInfo | URL, init?: RequestInit): Request {
@@ -310,6 +319,91 @@ describe('createSessionClient verifies sessions over a service binding with a KV
       await client.get(makeSessionRequest());
       await client.get(makeBearerRequest());
       expect(fetch).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('only the credential being verified is forwarded', () => {
+    it('does not let a valid bearer token vouch for a forged cookie on the same request', async () => {
+      const { binding, fetch, seen } = fakeAuthBinding(new Date(Date.now() + 3_600_000));
+      const kv = new FakeKV();
+      const client = buildSessionClient({ auth: binding, kv, basePath: BASE_PATH });
+
+      // The cookie is the credential (cookies win); the bearer token would
+      // be accepted by the auth Worker, but must not be sent alongside it.
+      const result = await client.get(
+        new Request('https://api.example.com/me', {
+          headers: { cookie: FORGED_COOKIE, authorization: `Bearer ${TOKEN}` },
+        })
+      );
+
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(seen[0].headers.get('authorization')).toBeNull();
+      expect(seen[0].headers.get('cookie')).toBe(FORGED_COOKIE);
+      expect(result).toBeNull();
+      expect(kv.store.size).toBe(0);
+    });
+
+    it('forwards only the Authorization header for a bearer credential', async () => {
+      const { binding, seen } = fakeAuthBinding(new Date(Date.now() + 3_600_000));
+      const client = buildSessionClient({ auth: binding, kv: new FakeKV(), basePath: BASE_PATH });
+
+      await client.get(
+        new Request('https://api.example.com/me', {
+          headers: { authorization: `Bearer ${TOKEN}`, cookie: 'unrelated=1' },
+        })
+      );
+
+      expect(seen[0].headers.get('authorization')).toBe(`Bearer ${TOKEN}`);
+      expect(seen[0].headers.get('cookie')).toBeNull();
+    });
+
+    it('drops recorded credentials when the entry turns out to hold a different session', async () => {
+      const kv = new FakeKV();
+      const cacheKey = sessionCacheKey(TOKEN);
+      const other = sessionPayload(new Date(Date.now() + 3_600_000));
+      // An entry under this token that describes some other session, with a
+      // credential recorded against it.
+      kv.store.set(
+        cacheKey,
+        JSON.stringify({
+          credentials: ['stale-credential'],
+          session: { ...other, session: { ...other.session, token: 'some-other-token' } },
+        })
+      );
+      const { binding } = fakeAuthBinding(new Date(Date.now() + 3_600_000));
+      const client = buildSessionClient({ auth: binding, kv, basePath: BASE_PATH });
+
+      await client.get(makeSessionRequest());
+
+      const entry = JSON.parse(kv.store.get(cacheKey) ?? '{}') as { credentials: string[] };
+      expect(entry.credentials).toEqual([SIGNED_TOKEN]);
+    });
+  });
+
+  describe('auth Worker unavailable', () => {
+    it('throws SessionUnavailableError when the service binding throws', async () => {
+      const binding = { fetch: () => Promise.reject(new Error('service binding not connected')) };
+      const client = buildSessionClient({ auth: binding, kv: new FakeKV(), basePath: BASE_PATH });
+
+      expect(await caught(client)).toBeInstanceOf(SessionUnavailableError);
+    });
+
+    it('throws SessionUnavailableError on a 5xx from the auth Worker, carrying the status', async () => {
+      const binding = { fetch: () => Promise.resolve(new Response('boom', { status: 502 })) };
+      const client = buildSessionClient({ auth: binding, kv: new FakeKV(), basePath: BASE_PATH });
+
+      const thrown = await caught(client);
+      expect(thrown).toBeInstanceOf(SessionUnavailableError);
+      expect((thrown as SessionUnavailableError).status).toBe(502);
+    });
+
+    it('still returns null for a 4xx, which is a negative answer', async () => {
+      const binding = {
+        fetch: () => Promise.resolve(new Response('Unauthorized', { status: 401 })),
+      };
+      const client = buildSessionClient({ auth: binding, kv: new FakeKV(), basePath: BASE_PATH });
+
+      expect(await client.get(makeSessionRequest())).toBeNull();
     });
   });
 

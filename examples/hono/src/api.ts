@@ -29,10 +29,8 @@ app.use('*', async (c, next) => {
   await next();
 });
 
-app.get(
-  '/me',
-  (c, next) => requireSession<AppEnv>({ client: c.get('sessions') })(c, next),
-  (c) => c.json(c.get('session').user)
+app.get('/me', requireSession<AppEnv>({ client: (c) => c.get('sessions') }), (c) =>
+  c.json(c.get('session').user)
 );
 
 export default app;

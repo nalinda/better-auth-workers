@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'bun:test';
 import { Hono } from 'hono';
 
-import { requireSession } from '../../src/client';
+import { requireSession, SessionUnavailableError } from '../../src/client';
 import type { SessionClient, SessionData } from '../../src/session/types';
 
 function makeSession(overrides: Partial<SessionData['user']> = {}): SessionData {
@@ -38,10 +38,10 @@ function buildApp(client: SessionClient, canAccess?: (session: SessionData) => b
     c.set('sessions', client);
     await next();
   });
+  // The README's form: mounted directly, the client read off the context.
   app.get(
     '/protected',
-    (c, next) =>
-      requireSession<AppEnv>({ client: c.get('sessions'), predicate: canAccess })(c, next),
+    requireSession<AppEnv>({ client: (c) => c.get('sessions'), predicate: canAccess }),
     (c) => c.json({ userId: c.get('session').user.id })
   );
   // The direct form, for a client that is not read off the context.
@@ -105,6 +105,28 @@ describe('requireSession Hono middleware', () => {
 
     expect(response.status).toBe(200);
     expect(body.userId).toBe('user-1');
+  });
+
+  it('answers 503, not 401, when the session client cannot reach the auth Worker', async () => {
+    const unreachable: SessionClient = {
+      get: () => Promise.reject(new SessionUnavailableError('auth Worker unreachable')),
+    };
+    const app = buildApp(unreachable);
+
+    const response = await app.request('/protected');
+
+    expect(response.status).toBe(503);
+  });
+
+  it('lets any other client error propagate', async () => {
+    const broken: SessionClient = { get: () => Promise.reject(new Error('bug in client')) };
+    const app = buildApp(broken);
+    app.onError((error, c) => c.text(error.message, 500));
+
+    const response = await app.request('/protected');
+
+    expect(response.status).toBe(500);
+    expect(await response.text()).toBe('bug in client');
   });
 
   it('works as a directly mounted middleware on an app with bindings and other variables', async () => {

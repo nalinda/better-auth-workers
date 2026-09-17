@@ -8,3 +8,4 @@ export type {
   SessionRecord,
   SessionUser,
 } from './session/types';
+export { SessionUnavailableError } from './session/types';

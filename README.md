@@ -342,28 +342,27 @@ app.get('/me', async (c) => {
 });
 ```
 
-Or use the middleware. `requireSession` takes the `SessionClient` explicitly — the same per-request `env`-bound instance created above — rather than building its own, so it composes with whatever setup created that client. It is generic over the app's `Env`; pass the app's type when the client comes from the context, so the middleware is typed for that context:
+Or use the middleware. `requireSession` takes the `SessionClient` explicitly — the same per-request `env`-bound instance created above — rather than building its own, so it composes with whatever setup created that client. `client` can be the instance itself or a function of the request context, so the middleware mounts directly on a route and reads the client off the Hono variable set above. It is generic over the app's `Env`; pass the app's type so `c` is typed for that context:
 
 ```ts
 import { requireSession } from 'better-auth-workers/client';
 
-app.get(
-  '/me',
-  (c, next) => requireSession<AppEnv>({ client: c.get('sessions') })(c, next),
-  (c) => c.json(c.get('session').user)
+app.get('/me', requireSession<AppEnv>({ client: (c) => c.get('sessions') }), (c) =>
+  c.json(c.get('session').user)
 );
 ```
+
+If the auth Worker cannot be reached (service binding down, or it answers 5xx) the middleware responds `503`, not `401`: an outage is not "not signed in", and clients should not clear their session over it. `createSessionClient().get` throws `SessionUnavailableError` in that case and returns `null` only for a real negative answer.
 
 `requireSession` also accepts a `predicate` for role checks, returning 403 when it fails. Note that the `user` the predicate sees is the cached copy: a point-in-time snapshot taken when the session was verified, refreshed only when the entry is evicted (sign-out and revocation, below) or expires with the session. A role change, email change or ban-less profile update on the auth Worker does not evict it, so a demoted user keeps passing a role predicate until then; if that matters, keep `session.expiresIn` short or re-check the user on the auth Worker for sensitive actions.
 
 ```ts
 app.get(
   '/admin',
-  (c, next) =>
-    requireSession<AppEnv>({
-      client: c.get('sessions'),
-      predicate: (s) => s.user.role === 'admin',
-    })(c, next),
+  requireSession<AppEnv>({
+    client: (c) => c.get('sessions'),
+    predicate: (s) => s.user.role === 'admin',
+  }),
   (c) => c.json(c.get('session').user)
 );
 ```
@@ -478,6 +477,23 @@ bun install
 bun test
 bun run --cwd examples/hono dev
 ```
+
+### Integration tests
+
+`bun test` runs the unit suite. The integration suite starts the example Worker under `wrangler dev` (with the API Worker and a small gateway) and drives it over HTTP; it only runs for the backends you ask for, and says so when none is requested:
+
+```sh
+INTEGRATION_BACKENDS=d1 bun run test:integration             # D1: wrangler's local SQLite, no other setup
+INTEGRATION_BACKENDS=d1,hyperdrive bun run test:integration  # also Postgres through Hyperdrive
+```
+
+The Hyperdrive backend needs a Postgres. By default the suite starts a throwaway `postgres:17-alpine` container with Docker and removes it afterwards; to use a Postgres you already have, set `INTEGRATION_POSTGRES_URL` to an admin connection string (the suite creates and drops its own database on it):
+
+```sh
+INTEGRATION_BACKENDS=hyperdrive INTEGRATION_POSTGRES_URL=postgresql://postgres:postgres@localhost:5432/postgres bun run test:integration
+```
+
+CI runs both backends this way (`.github/workflows/ci.yml`, with a Postgres service container).
 
 ### Release process
 
