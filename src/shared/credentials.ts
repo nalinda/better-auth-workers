@@ -24,3 +24,12 @@ export function sessionTokenFromCookie(request: Request, cookieName: string): st
   const [token] = signed.split('.', 1);
   return token || undefined;
 }
+
+// The bearer plugin sends the bare (unsigned) token, unlike the cookie.
+export function sessionTokenFromAuthorizationHeader(request: Request): string | undefined {
+  const header = request.headers.get('authorization');
+  if (!header) return;
+  const [scheme, token] = header.split(' ', 2);
+  if (!scheme || scheme.toLowerCase() !== 'bearer') return;
+  return token || undefined;
+}

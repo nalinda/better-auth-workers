@@ -1,4 +1,8 @@
-import { DEFAULT_COOKIE_NAME, sessionTokenFromCookie } from '../shared/credentials';
+import {
+  DEFAULT_COOKIE_NAME,
+  sessionTokenFromAuthorizationHeader,
+  sessionTokenFromCookie,
+} from '../shared/credentials';
 import { KV_MIN_TTL_SECONDS, sessionCacheKey } from '../shared/session-cache';
 import type { JsonValue, KVStore } from '../types';
 import { remainingTtlSeconds, toSessionData } from './parse';
@@ -27,7 +31,9 @@ async function fetchSession(
   const basePath = options.basePath ?? DEFAULT_BASE_PATH;
   const url = `${SERVICE_BINDING_ORIGIN}${basePath.replace(/\/$/, '')}/get-session`;
   const headers = new Headers({ accept: 'application/json' });
+  const authorization = request.headers.get('authorization');
   const cookie = request.headers.get('cookie');
+  if (authorization) headers.set('authorization', authorization);
   if (cookie) headers.set('cookie', cookie);
 
   try {
@@ -44,7 +50,8 @@ export function createSessionClient(options: SessionClientOptions): SessionClien
 
   return {
     get: async (request) => {
-      const token = sessionTokenFromCookie(request, cookieName);
+      const token =
+        sessionTokenFromCookie(request, cookieName) ?? sessionTokenFromAuthorizationHeader(request);
       if (!token) return null;
 
       const cacheKey = sessionCacheKey(token);

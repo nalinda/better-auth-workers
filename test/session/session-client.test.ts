@@ -53,6 +53,12 @@ function makeSessionRequest(): Request {
   return new Request('https://api.example.com/me', { headers: { cookie: VALID_COOKIE } });
 }
 
+function makeBearerRequest(): Request {
+  return new Request('https://api.example.com/me', {
+    headers: { authorization: `Bearer ${TOKEN}` },
+  });
+}
+
 function sessionPayload(expiresAt: Date) {
   return {
     session: {
@@ -87,7 +93,12 @@ function fakeAuthBinding(expiresAt: Date) {
       return Promise.resolve(new Response('Not found', { status: 404 }));
     }
     const cookie = req.headers.get('cookie') ?? '';
-    if (cookie.includes(encodeURIComponent(SIGNED_TOKEN)) || cookie.includes(SIGNED_TOKEN)) {
+    const authorization = req.headers.get('authorization') ?? '';
+    if (
+      cookie.includes(encodeURIComponent(SIGNED_TOKEN)) ||
+      cookie.includes(SIGNED_TOKEN) ||
+      authorization === `Bearer ${TOKEN}`
+    ) {
       return Promise.resolve(Response.json(sessionPayload(expiresAt)));
     }
     // Better Auth's get-session returns a JSON null for a missing or invalid session
@@ -132,6 +143,87 @@ describe('createSessionClient verifies sessions over a service binding with a KV
       );
 
       expect(result?.user.email).toBe('alice@example.com');
+    });
+  });
+
+  describe('get(request) with an Authorization: Bearer header', () => {
+    it('forwards the Authorization header to the auth Worker get-session route and returns the same session a cookie would', async () => {
+      const expiresAt = new Date(Date.now() + 3_600_000);
+      const { binding, fetch, seen } = fakeAuthBinding(expiresAt);
+      const kv = new FakeKV();
+      const client = buildSessionClient({ auth: binding, kv, basePath: BASE_PATH });
+
+      const result = await client.get(makeBearerRequest());
+
+      expect(fetch).toHaveBeenCalledTimes(1);
+      const forwarded = seen[0];
+      expect(forwarded.headers.get('authorization')).toBe(`Bearer ${TOKEN}`);
+
+      expect(result).not.toBeNull();
+      expect(result!.session.token).toBe(TOKEN);
+      expect(result!.user.id).toBe('user-1');
+    });
+
+    it('resolves the same session a cookie-carrying request would, keyed by the same cache entry', async () => {
+      const expiresAt = new Date(Date.now() + 3_600_000);
+      const kv = new FakeKV();
+      const cookieClient = buildSessionClient({
+        auth: fakeAuthBinding(expiresAt).binding,
+        kv,
+        basePath: BASE_PATH,
+      });
+      const bearerClient = buildSessionClient({
+        auth: fakeAuthBinding(expiresAt).binding,
+        kv,
+        basePath: BASE_PATH,
+      });
+
+      const cookieResult = await cookieClient.get(makeSessionRequest());
+      const bearerResult = await bearerClient.get(makeBearerRequest());
+
+      expect(cookieResult).not.toBeNull();
+      expect(bearerResult).not.toBeNull();
+      expect(bearerResult!.session.token).toBe(cookieResult!.session.token);
+      expect(bearerResult!.user.id).toBe(cookieResult!.user.id);
+    });
+
+    it('serves a second get(request) for the same bearer token from KV without calling the service binding again', async () => {
+      const { binding, fetch } = fakeAuthBinding(new Date(Date.now() + 3_600_000));
+      const kv = new FakeKV();
+      const client = buildSessionClient({ auth: binding, kv, basePath: BASE_PATH });
+
+      const first = await client.get(makeBearerRequest());
+      const second = await client.get(makeBearerRequest());
+
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(second).not.toBeNull();
+      expect(second!.session.token).toBe(first!.session.token);
+      expect(second!.user.id).toBe(first!.user.id);
+    });
+
+    it('returns null without throwing when the request carries no cookie or bearer token', async () => {
+      const { binding } = fakeAuthBinding(new Date(Date.now() + 3_600_000));
+      const client = buildSessionClient({ auth: binding, kv: new FakeKV(), basePath: BASE_PATH });
+
+      const result = await client.get(new Request('https://api.example.com/me'));
+
+      expect(result).toBeNull();
+    });
+
+    it('returns null without throwing when the bearer token does not match a session', async () => {
+      const { binding, fetch } = fakeAuthBinding(new Date(Date.now() + 3_600_000));
+      const kv = new FakeKV();
+      const client = buildSessionClient({ auth: binding, kv, basePath: BASE_PATH });
+
+      const result = await client.get(
+        new Request('https://api.example.com/me', {
+          headers: { authorization: 'Bearer nope-not-a-real-token' },
+        })
+      );
+
+      expect(result).toBeNull();
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(kv.store.size).toBe(0);
     });
   });
 
