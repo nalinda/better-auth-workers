@@ -1,23 +1,25 @@
 import { describe, expect, it } from 'bun:test';
 
 import { type AuthEnv, createAuth, type CreateAuthOptions } from '../../src/index';
-import { buildEnv } from '../helpers/auth';
+import { buildEnv, createMockD1, FakeKV, VALID_SECRET } from '../helpers/auth';
 
 // Type-level contract, checked by `bun run ts-check` (which compiles the
 // test tree): `AuthEnv` and `CreateAuthOptions` are closed types, so a
-// missing required binding or a misspelled option is a compile error, not
-// a runtime surprise. Each directive below would itself error if the
-// expression stopped failing to type-check.
+// mistyped binding or a misspelled option is a compile error, not a
+// runtime surprise. `AuthEnv`'s fields are optional (each is a fallback for
+// an `options` field), so an env that binds nothing under the package's
+// names still type-checks and is caught by startup validation instead.
+// Each directive below would itself error if the expression stopped
+// failing to type-check.
 function typeContract(env: AuthEnv, options: CreateAuthOptions): unknown[] {
-  // @ts-expect-error AUTH_KV is required by AuthEnv and missing here
-  const missingKv: AuthEnv = { AUTH_BASE_URL: 'x', BETTER_AUTH_SECRET: 'y' };
+  const bindsElsewhere: AuthEnv = {};
   // @ts-expect-error AUTH_KV must be a KVNamespace, not a string
   const wrongKv: AuthEnv = { ...env, AUTH_KV: 'not-a-namespace' };
   // @ts-expect-error `magicLinks` is not an option; `magicLink` is
   const misspelled: CreateAuthOptions = { ...options, magicLinks: {} };
   // @ts-expect-error unknown Better Auth options go through `betterAuth`, not the top level
   const stray: CreateAuthOptions = { ...options, trustedOrigins: [] };
-  return [missingKv, wrongKv, misspelled, stray];
+  return [bindsElsewhere, wrongKv, misspelled, stray];
 }
 
 describe('createAuth: combined missing-binding diagnostics', () => {
@@ -60,6 +62,27 @@ describe('createAuth: combined missing-binding diagnostics', () => {
 
   it('does not throw when every required binding is resolvable', () => {
     expect(() => createAuth(buildEnv(), {})).not.toThrow();
+  });
+
+  it('accepts an env that binds under other names when the values come through options', () => {
+    // A Worker's own Env extends AuthEnv but binds under its own names;
+    // nothing the package reads from env is present, so no cast is needed.
+    interface WorkerEnv extends AuthEnv {
+      SESSIONS: KVNamespace;
+      AUTH_DB: D1Database;
+    }
+    const env: WorkerEnv = {
+      SESSIONS: new FakeKV().asBinding(),
+      AUTH_DB: createMockD1().asBinding(),
+    };
+    expect(() =>
+      createAuth(env, {
+        baseURL: 'https://auth.example.com',
+        secret: VALID_SECRET,
+        kv: env.SESSIONS,
+        database: { d1: env.AUTH_DB },
+      })
+    ).not.toThrow();
   });
 
   it('exposes the type contract helper so the compile-time checks are part of the suite', () => {

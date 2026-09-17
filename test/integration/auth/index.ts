@@ -49,7 +49,7 @@ function countingEnv(env: AuthEnv): AuthEnv {
   if (existing) return existing;
   const wrapped: AuthEnv = {
     ...env,
-    AUTH_KV: countingKv(env.AUTH_KV),
+    ...(env.AUTH_KV && { AUTH_KV: countingKv(env.AUTH_KV) }),
     ...(env.DB && { DB: countingD1(env.DB) }),
   };
   wrappedEnvs.set(env, wrapped);

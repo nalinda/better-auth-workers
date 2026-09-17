@@ -4,7 +4,7 @@
     "lib": ["ES2025"],
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "types": ["bun", "@cloudflare/workers-types"],
+    "types": ["@cloudflare/workers-types"],
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,

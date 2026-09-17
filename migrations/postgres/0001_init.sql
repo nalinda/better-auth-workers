@@ -1,6 +1,6 @@
 -- Migration: 0001_init.sql
 -- Database: PostgreSQL
--- Generated for better-auth-workers (admin, phone-number, bearer)
+-- Generated for better-auth-workers (admin, phone-number, bearer, magic-link; magic-link adds no tables)
 
 create table "user" ("id" text not null primary key, "name" text not null, "email" text not null unique, "emailVerified" boolean not null, "image" text, "createdAt" timestamptz default CURRENT_TIMESTAMP not null, "updatedAt" timestamptz default CURRENT_TIMESTAMP not null, "role" text, "banned" boolean, "banReason" text, "banExpires" timestamptz, "phoneNumber" text unique, "phoneNumberVerified" boolean);
 

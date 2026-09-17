@@ -1,6 +1,6 @@
 -- Migration: 0001_init.sql
 -- Database: SQLite / Cloudflare D1
--- Generated for better-auth-workers (admin, phone-number, bearer)
+-- Generated for better-auth-workers (admin, phone-number, bearer, magic-link; magic-link adds no tables)
 
 create table "user" ("id" text not null primary key, "name" text not null, "email" text not null unique, "emailVerified" integer not null, "image" text, "createdAt" date not null, "updatedAt" date not null, "role" text, "banned" integer, "banReason" text, "banExpires" date, "phoneNumber" text unique, "phoneNumberVerified" integer);
 

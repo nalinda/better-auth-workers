@@ -4,8 +4,6 @@
 
 It is a thin layer. Better Auth's options, plugins and clients are all still yours to use directly. This package only handles the Workers-specific plumbing and the cross-Worker session contract.
 
-> **Status:** pre-release. The API described here is the target for 0.1.0 and may change before then.
-
 ## Contents
 
 - [Why this exists](#why-this-exists)
@@ -52,7 +50,7 @@ This package does those four things and stops.
 - **`createSessionClient`** for other Workers: verify a session over a service binding, cache it in KV, and get a Hono `requireSession()` middleware.
 - **Bearer tokens** for mobile and CLI clients through Better Auth's bearer plugin.
 - **SQL migrations shipped in the package** for both Postgres and SQLite, covering the default schema.
-- Typed `Env` so a missing binding is a type error, not a runtime surprise.
+- Typed `Env` for the bindings the package reads, and a startup check that names every missing one at once, not on the first request.
 
 ## Installation
 
@@ -158,21 +156,21 @@ Call `auth.handler(request, ctx)` with the request's `ExecutionContext` on every
 
 `CreateAuthOptions` is a closed type at the top level: a misspelled key (`magicLinks:` for `magicLink:`) is a type error rather than a silently ignored option. `betterAuth` is the single escape hatch for everything else Better Auth accepts (`session`, `rateLimit`, `hooks`, `advanced`, `trustedOrigins`, ...); it is an intentionally loose record, so keys nested under it are not checked against Better Auth's types — consult Better Auth's own documentation for those.
 
-| Option           | Type                                                                 | Default                  | Description                                                                                                                        |
-| ---------------- | -------------------------------------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `basePath`       | `string`                                                             | `'/api/auth'`            | Path prefix the Worker serves Better Auth under.                                                                                   |
-| `baseURL`        | `string`                                                             | `env.AUTH_BASE_URL`      | Public origin used for callbacks and cookies.                                                                                      |
-| `secret`         | `string`                                                             | `env.BETTER_AUTH_SECRET` | Signing secret.                                                                                                                    |
-| `database`       | `{ hyperdrive: Hyperdrive, pg } \| { d1: D1Database } \| D1Database` | required                 | Primary store; a bare D1 binding is shorthand for `{ d1 }`. See [Storage](#storage).                                               |
-| `kv`             | `KVNamespace`                                                        | required                 | Secondary storage for session cache and rate limiting.                                                                             |
-| `phone`          | `{ sendOTP, otpLength?, expiresIn?, allowedAttempts? }`              | off                      | Enables the phone-number plugin. See [Phone OTP](#phone-otp).                                                                      |
-| `google`         | `boolean \| { clientId, clientSecret }`                              | off                      | Enables Google sign-in. `true` reads the secrets from `env`.                                                                       |
-| `magicLink`      | `{ sendMagicLink, expiresIn?, disableSignUp? }`                      | off                      | Enables magic-link sign-in. See [Magic link sign-in](#magic-link-sign-in).                                                         |
-| `bearer`         | `boolean`                                                            | `false`                  | Enables the bearer plugin for non-browser clients.                                                                                 |
-| `allowedMethods` | `Array<'phone' \| 'google' \| 'magic-link'>`                         | all enabled              | Rejects sign-in attempts through any other method.                                                                                 |
-| `plugins`        | `BetterAuthPlugin[]`                                                 | `[]`                     | Extra Better Auth plugins, appended after the built-in ones (`betterAuth.plugins` is appended the same way, never replacing them). |
-| `betterAuth`     | `Partial<BetterAuthOptions>`                                         | `{}`                     | Escape hatch. Merged last, so it can override anything above.                                                                      |
-| `ctx`            | `ExecutionContext`                                                   | none                     | Fallback context for `waitUntil` work; `auth.handler(request, ctx)` takes precedence.                                              |
+| Option           | Type                                                                           | Default                  | Description                                                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------ | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `basePath`       | `string`                                                                       | `'/api/auth'`            | Path prefix the Worker serves Better Auth under.                                                                                   |
+| `baseURL`        | `string`                                                                       | `env.AUTH_BASE_URL`      | Public origin used for callbacks and cookies.                                                                                      |
+| `secret`         | `string`                                                                       | `env.BETTER_AUTH_SECRET` | Signing secret.                                                                                                                    |
+| `database`       | `{ hyperdrive: Hyperdrive, pg } \| { d1: D1Database } \| D1Database`           | required                 | Primary store; a bare D1 binding is shorthand for `{ d1 }`. See [Storage](#storage).                                               |
+| `kv`             | `KVNamespace`                                                                  | required                 | Secondary storage for session cache and rate limiting.                                                                             |
+| `phone`          | `{ sendOTP, otpLength?, expiresIn?, allowedAttempts?, signUpOnVerification? }` | off                      | Enables the phone-number plugin. See [Phone OTP](#phone-otp).                                                                      |
+| `google`         | `boolean \| { clientId, clientSecret }`                                        | off                      | Enables Google sign-in. `true` reads the secrets from `env`.                                                                       |
+| `magicLink`      | `{ sendMagicLink, expiresIn?, disableSignUp? }`                                | off                      | Enables magic-link sign-in. See [Magic link sign-in](#magic-link-sign-in).                                                         |
+| `bearer`         | `boolean`                                                                      | `false`                  | Enables the bearer plugin for non-browser clients.                                                                                 |
+| `allowedMethods` | `Array<'phone' \| 'google' \| 'magic-link'>`                                   | all enabled              | Rejects sign-in attempts through any other method.                                                                                 |
+| `plugins`        | `BetterAuthPlugin[]`                                                           | `[]`                     | Extra Better Auth plugins, appended after the built-in ones (`betterAuth.plugins` is appended the same way, never replacing them). |
+| `betterAuth`     | `Partial<BetterAuthOptions>`                                                   | `{}`                     | Escape hatch. Merged last, so it can override anything above.                                                                      |
+| `ctx`            | `ExecutionContext`                                                             | none                     | Fallback context for `waitUntil` work; `auth.handler(request, ctx)` takes precedence.                                              |
 
 **Package defaults under `betterAuth`.** Three Better Auth settings get a default from this package: `session.cookieCache.enabled: true`, `rateLimit.storage: 'secondary-storage'` (when `kv` is configured) and `advanced.database.validateSchema: false`. Whatever you set under `betterAuth.session`, `betterAuth.rateLimit` or `betterAuth.advanced` is shallow-merged over that default, field by field, so you state only what you change and can override the default itself (e.g. `betterAuth: { rateLimit: { storage: 'memory' } }`). Your `betterAuth.hooks` are composed with the package's own hooks (method restriction, cache invalidation), which run first in both slots.
 
@@ -392,7 +390,7 @@ Clients then receive the session token in a `set-auth-token` response header aft
 
 ## Migrations
 
-The package ships the SQL for Better Auth's default schema plus the plugins it enables (phone number, admin, bearer):
+The package ships the SQL for Better Auth's default schema plus the plugins it enables (phone number, admin, bearer, magic link — the last adds no tables of its own):
 
 ```
 node_modules/better-auth-workers/migrations/postgres/0001_init.sql
