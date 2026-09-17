@@ -33,6 +33,7 @@ It's a thin layer. Better Auth's options, plugins and clients still work the sam
 - [Compatibility](#compatibility)
 - [FAQ](#faq)
 - [Contributing](#contributing)
+  - [Release process](#release-process)
 - [License](#license)
 
 ## Why this exists
@@ -463,6 +464,22 @@ bun install
 bun test
 bun run --cwd examples/hono dev
 ```
+
+### Release process
+
+- **Versioning**: Follows [Semantic Versioning](https://semver.org/). As noted in [Migrations](#migrations), schema changes in this package are always a major version bump.
+- **Changelog**: Maintained per release in [CHANGELOG.md](CHANGELOG.md) following [Keep a Changelog](https://keepachangelog.com/). Each release documents notable changes under Added, Changed, Deprecated, Removed, Fixed, or Security.
+- **Release workflow**: Releases are triggered by pushing a version tag (`v*`, e.g. `v0.1.0`). The `.github/workflows/release.yml` workflow builds the package, runs the test suite, extracts release notes from `CHANGELOG.md`, and drafts a GitHub release.
+- **npm publishing**: Publishing to npm is currently pending `NPM_TOKEN` configuration. When a version tag is pushed without `NPM_TOKEN` configured, the workflow builds, tests, and drafts the release, but skips the publish step with a visible notice.
+
+#### Configuring npm publishing
+
+When ready to enable automated npm publishing:
+
+1. Create an automation access token on [npmjs.com](https://www.npmjs.com/) (or a granular access token scoped to the package with read and write permissions).
+2. Add it as a repository secret named `NPM_TOKEN` in GitHub (**Settings** → **Secrets and variables** → **Actions** → **New repository secret**).
+3. If the package has not yet been published to npm, run the initial publish manually once from an authenticated machine (`npm login`, then `npm publish --access public`). Subsequent releases are published automatically by CI.
+4. Provenance (`npm publish --provenance`) uses GitHub Actions OIDC via `permissions: id-token: write` and requires no additional secrets.
 
 ## License
 
