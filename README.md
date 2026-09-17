@@ -185,7 +185,7 @@ database: {
 }
 ```
 
-Better Auth's D1 dialect is used directly. D1 has a free tier that comfortably covers a small application's auth traffic, so a Worker that has no other database can still run full auth.
+Better Auth's D1 dialect is used directly: the D1 binding is passed straight through as Better Auth's database config. D1 has a free tier that comfortably covers a small application's auth traffic, so a Worker that has no other database can still run full auth. For local development with `wrangler dev`, apply migrations to the local database with `wrangler d1 migrations apply <db> --local`.
 
 ### Choosing
 
@@ -331,6 +331,12 @@ Apply them with whatever you already use. For D1:
 ```sh
 cp node_modules/better-auth-workers/migrations/sqlite/*.sql migrations/
 wrangler d1 migrations apply <db>
+```
+
+For local development against `wrangler dev`:
+
+```sh
+wrangler d1 migrations apply <db> --local
 ```
 
 For Postgres, copy the file into your migration tool's directory and record the package version in a comment so upgrades are traceable.

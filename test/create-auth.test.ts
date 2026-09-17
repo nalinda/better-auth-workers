@@ -34,9 +34,21 @@ const createAuthInstance = (env: Record<string, unknown>, options?: CreateAuthOp
 describe('Issue #2: createAuth: per-request Better Auth instance memoised on env', () => {
   const validSecret = 'test-secret-at-least-32-chars-long-1234567890';
   const validBaseUrl = 'https://auth.example.com';
+  const mockD1 = {
+    prepare: () => ({
+      bind: () => ({
+        all: () => Promise.resolve({ results: [], success: true, meta: { changes: 0 } }),
+        first: () => Promise.resolve(null),
+        run: () => Promise.resolve({ success: true, meta: { changes: 0 } }),
+      }),
+    }),
+    batch: () => Promise.resolve([]),
+    exec: () => Promise.resolve({ count: 0, duration: 0 }),
+  };
   const validEnv = {
     AUTH_BASE_URL: validBaseUrl,
     BETTER_AUTH_SECRET: validSecret,
+    DB: mockD1,
   };
 
   describe('Instance creation', () => {
@@ -49,7 +61,6 @@ describe('Issue #2: createAuth: per-request Better Auth instance memoised on env
 
     it('builds a Better Auth instance using bindings on env', () => {
       const mockKv = { get: () => {}, put: () => {}, delete: () => {} };
-      const mockD1 = { prepare: () => {} };
       const envWithBindings = {
         ...validEnv,
         AUTH_KV: mockKv,
@@ -96,6 +107,7 @@ describe('Issue #2: createAuth: per-request Better Auth instance memoised on env
 
     it('resolves baseURL from options first, taking precedence over env.AUTH_BASE_URL', () => {
       const env = {
+        ...validEnv,
         AUTH_BASE_URL: 'https://env.example.com',
         BETTER_AUTH_SECRET: validSecret,
       };
@@ -105,6 +117,7 @@ describe('Issue #2: createAuth: per-request Better Auth instance memoised on env
 
     it('resolves baseURL from env.AUTH_BASE_URL when options.baseURL is omitted', () => {
       const env = {
+        ...validEnv,
         AUTH_BASE_URL: 'https://env.example.com',
         BETTER_AUTH_SECRET: validSecret,
       };
@@ -114,6 +127,7 @@ describe('Issue #2: createAuth: per-request Better Auth instance memoised on env
 
     it('resolves secret from options first, taking precedence over env.BETTER_AUTH_SECRET', () => {
       const env = {
+        ...validEnv,
         AUTH_BASE_URL: validBaseUrl,
         BETTER_AUTH_SECRET: 'env-secret-at-least-32-chars-long-12345',
       };
@@ -125,6 +139,7 @@ describe('Issue #2: createAuth: per-request Better Auth instance memoised on env
 
     it('resolves secret from env.BETTER_AUTH_SECRET when options.secret is omitted', () => {
       const env = {
+        ...validEnv,
         AUTH_BASE_URL: validBaseUrl,
         BETTER_AUTH_SECRET: 'env-secret-at-least-32-chars-long-12345',
       };

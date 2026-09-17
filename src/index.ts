@@ -47,7 +47,7 @@ export interface CreateAuthOptions {
   basePath?: string;
   baseURL?: string;
   secret?: string;
-  database?: CreateAuthDatabaseOptions;
+  database?: CreateAuthDatabaseOptions | D1Database;
   kv?: KVStore;
   secondaryStorage?: CreateAuthSecondaryStorage;
   ctx?: ExecutionContext;
@@ -161,11 +161,19 @@ function loadPgPoolClass(): (new (config: PgPoolConfig) => PgPool) | undefined {
   }
 }
 
+function getHyperdriveOption(
+  database?: CreateAuthDatabaseOptions | D1Database
+): HyperdriveDatabaseOption | undefined {
+  if (database && typeof database === 'object' && 'hyperdrive' in database) {
+    return database.hyperdrive;
+  }
+}
+
 function resolveHyperdriveConnectionString(
   options?: CreateAuthOptions,
   envObj?: AuthEnv
 ): string | undefined {
-  const hyperdriveOption = options?.database?.hyperdrive;
+  const hyperdriveOption = getHyperdriveOption(options?.database);
   if (
     hyperdriveOption &&
     typeof hyperdriveOption === 'object' &&
@@ -187,17 +195,68 @@ function resolveHyperdriveConnectionString(
   }
 }
 
-function buildDatabase(
+function isEnvLike(obj: object | undefined): obj is AuthEnv {
+  if (!obj) return false;
+  if ('AUTH_BASE_URL' in obj || 'BETTER_AUTH_SECRET' in obj) return true;
+  return 'DB' in obj || 'HYPERDRIVE' in obj;
+}
+
+function isOptionsLike(obj: object | undefined): obj is CreateAuthOptions {
+  if (!obj) return false;
+  if ('database' in obj || 'phone' in obj || 'bearer' in obj) return true;
+  return 'allowedMethods' in obj || 'betterAuth' in obj || 'secondaryStorage' in obj;
+}
+
+function normalizeArgs(
+  arg1: AuthEnv | CreateAuthOptions,
+  arg2?: CreateAuthOptions | AuthEnv
+): { env: AuthEnv; options?: CreateAuthOptions } {
+  if (isEnvLike(arg2) && !isEnvLike(arg1)) {
+    return {
+      env: arg2,
+      options: arg1,
+    };
+  }
+  if (isOptionsLike(arg1)) {
+    return {
+      env: arg2 ?? {},
+      options: arg1,
+    };
+  }
+  return {
+    env: arg1,
+    options: arg2,
+  };
+}
+
+export type ResolvedDatabase =
+  PgPool | D1Database | Record<string, (arg?: string) => void> | ConfigValue;
+
+interface BuildDatabaseResult {
+  database: ResolvedDatabase;
+  pool?: PgPool;
+}
+
+function resolveD1Binding(
   options?: CreateAuthOptions,
   envObj?: AuthEnv
-): {
-  database:
-    | CreateAuthDatabaseOptions
-    | PgPool
-    | { d1: D1Database | Record<string, (arg?: string) => void> }
-    | undefined;
-  pool?: PgPool;
-} {
+): D1Database | Record<string, (arg?: string) => void> | undefined {
+  const databaseOpt = options?.database;
+  if (databaseOpt && typeof databaseOpt === 'object') {
+    if ('d1' in databaseOpt && databaseOpt.d1) {
+      return databaseOpt.d1;
+    }
+    if ('prepare' in databaseOpt || 'batch' in databaseOpt) {
+      return databaseOpt as D1Database;
+    }
+  }
+
+  if (options?.database === undefined && envObj?.DB) {
+    return envObj.DB as D1Database;
+  }
+}
+
+function buildDatabase(options?: CreateAuthOptions, envObj?: AuthEnv): BuildDatabaseResult {
   const connectionString = resolveHyperdriveConnectionString(options, envObj);
   if (connectionString) {
     const PoolClass = loadPgPoolClass();
@@ -210,14 +269,18 @@ function buildDatabase(
     }
   }
 
-  if (options?.database !== undefined) {
-    return { database: options.database };
-  }
-  if (envObj?.DB) {
-    return { database: { d1: envObj.DB as D1Database } };
+  const d1 = resolveD1Binding(options, envObj);
+  if (d1) {
+    return { database: d1 };
   }
 
-  return { database: undefined };
+  if (options?.betterAuth?.database) {
+    return { database: options.betterAuth.database };
+  }
+
+  throw new Error(
+    'database is required: specify options.database.hyperdrive or options.database.d1 (or provide HYPERDRIVE or DB on env)'
+  );
 }
 
 function getCachedInstance(env: object, optionsKey: string): AuthInstance | undefined {
@@ -233,7 +296,13 @@ function setCachedInstance(env: object, optionsKey: string, instance: AuthInstan
   envMap.set(optionsKey, instance);
 }
 
-export function createAuth(env: AuthEnv, options?: CreateAuthOptions): AuthInstance {
+export function createAuth(env: AuthEnv, options?: CreateAuthOptions): AuthInstance;
+export function createAuth(options: CreateAuthOptions, env?: AuthEnv): AuthInstance;
+export function createAuth(
+  arg1: AuthEnv | CreateAuthOptions,
+  arg2?: CreateAuthOptions | AuthEnv
+): AuthInstance {
+  const { env, options } = normalizeArgs(arg1, arg2);
   const isHyperdrive = Boolean(resolveHyperdriveConnectionString(options, env));
   const optionsKey = getOptionsKey(options);
 
@@ -252,6 +321,11 @@ export function createAuth(env: AuthEnv, options?: CreateAuthOptions): AuthInsta
 
   const defaults = {
     basePath: '/api/auth',
+    advanced: {
+      database: {
+        validateSchema: false,
+      },
+    },
   };
 
   const authConfig = {

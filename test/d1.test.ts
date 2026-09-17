@@ -25,11 +25,11 @@ mock.module('pg', () => ({
 
 function createMockD1() {
   return {
-    prepare: mock((query: string) => ({
+    prepare: mock((_query: string) => ({
       bind: mock((..._params: unknown[]) => ({
-        all: mock(() => Promise.resolve({ results: [], success: true })),
+        all: mock(() => Promise.resolve({ results: [], success: true, meta: { changes: 0 } })),
         first: mock(() => Promise.resolve(null)),
-        run: mock(() => Promise.resolve({ success: true })),
+        run: mock(() => Promise.resolve({ success: true, meta: { changes: 0 } })),
       })),
     })),
     batch: mock((_stmts: unknown[]) => Promise.resolve([])),
@@ -52,11 +52,12 @@ describe('Issue #4: D1 as the primary store', () => {
   describe('D1 binding plumbing and configuration', () => {
     it('passes the D1 binding straight through as Better Auth database config when called as createAuth({ database: { d1 } }, env)', () => {
       const mockD1 = createMockD1();
+      const env = { ...validEnv };
       const auth = (createAuth as any)(
         {
           database: { d1: mockD1 },
         },
-        validEnv
+        env
       );
 
       expect(auth?.options?.database).toBe(mockD1);
@@ -65,7 +66,8 @@ describe('Issue #4: D1 as the primary store', () => {
 
     it('passes the D1 binding straight through when called as createAuth(env, { database: { d1 } })', () => {
       const mockD1 = createMockD1();
-      const auth = (createAuth as any)(validEnv, {
+      const env = { ...validEnv };
+      const auth = (createAuth as any)(env, {
         database: { d1: mockD1 },
       });
 
