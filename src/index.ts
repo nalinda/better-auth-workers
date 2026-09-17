@@ -41,6 +41,28 @@ export interface CreateAuthSecondaryStorage {
   get(key: string): Promise<string | null> | string | null;
   set(key: string, value: string, ttl?: number): Promise<void> | void;
   delete(key: string): Promise<void> | void;
+  increment?: (key: string, ttl: number) => Promise<number> | number;
+}
+
+export interface CreateAuthRateLimitOptions {
+  enabled?: boolean;
+  window?: number;
+  max?: number;
+  storage?: 'memory' | 'database' | 'secondary-storage';
+  customRules?: Record<string, ConfigValue>;
+  [key: string]: ConfigValue;
+}
+
+export interface CreateAuthCookieCacheOptions {
+  enabled?: boolean;
+  maxAge?: number;
+  [key: string]: ConfigValue;
+}
+
+export interface CreateAuthSessionOptions {
+  cookieCache?: CreateAuthCookieCacheOptions;
+  storeSessionInDatabase?: boolean;
+  [key: string]: ConfigValue;
 }
 
 export interface CreateAuthOptions {
@@ -56,6 +78,8 @@ export interface CreateAuthOptions {
   bearer?: boolean;
   allowedMethods?: Array<'phone' | 'google' | 'magic-link'>;
   plugins?: BetterAuthPlugin[];
+  rateLimit?: CreateAuthRateLimitOptions;
+  session?: CreateAuthSessionOptions;
   betterAuth?: Record<string, ConfigValue>;
   [key: string]: ConfigValue;
 }
@@ -130,6 +154,13 @@ function buildSecondaryStorage(options?: CreateAuthOptions, envObj?: AuthEnv) {
     set: (key: string, value: string, ttl?: number) =>
       kv.put(key, value, ttl ? { expirationTtl: ttl } : undefined),
     delete: (key: string) => kv.delete(key),
+    increment: async (key: string, ttl: number): Promise<number> => {
+      const current = await kv.get(key);
+      const parsed = current ? Number(current) : 0;
+      const next = (Number.isNaN(parsed) ? 0 : Math.trunc(parsed)) + 1;
+      await kv.put(key, String(next), ttl ? { expirationTtl: ttl } : undefined);
+      return next;
+    },
   };
 }
 
@@ -201,10 +232,19 @@ function isEnvLike(obj: object | undefined): obj is AuthEnv {
   return 'DB' in obj || 'HYPERDRIVE' in obj;
 }
 
+const OPTION_KEYS = new Set([
+  'allowedMethods',
+  'betterAuth',
+  'secondaryStorage',
+  'kv',
+  'rateLimit',
+  'session',
+]);
+
 function isOptionsLike(obj: object | undefined): obj is CreateAuthOptions {
   if (!obj) return false;
   if ('database' in obj || 'phone' in obj || 'bearer' in obj) return true;
-  return 'allowedMethods' in obj || 'betterAuth' in obj || 'secondaryStorage' in obj;
+  return Object.keys(obj).some((key) => OPTION_KEYS.has(key));
 }
 
 function normalizeArgs(
@@ -296,6 +336,40 @@ function setCachedInstance(env: object, optionsKey: string, instance: AuthInstan
   envMap.set(optionsKey, instance);
 }
 
+function buildSessionConfig(options?: CreateAuthOptions): CreateAuthSessionOptions {
+  const betterAuthSession = options?.betterAuth?.session as CreateAuthSessionOptions | undefined;
+  const userCookieCache = betterAuthSession?.cookieCache ?? options?.session?.cookieCache;
+  const cookieCache =
+    typeof userCookieCache === 'boolean'
+      ? { enabled: userCookieCache }
+      : {
+          enabled: true,
+          ...userCookieCache,
+        };
+
+  return {
+    ...options?.session,
+    ...betterAuthSession,
+    cookieCache,
+  };
+}
+
+function buildRateLimitConfig(
+  options?: CreateAuthOptions,
+  secondaryStorage?: CreateAuthSecondaryStorage
+): CreateAuthRateLimitOptions | undefined {
+  const betterAuthRateLimit = options?.betterAuth?.rateLimit as
+    CreateAuthRateLimitOptions | undefined;
+  const userRateLimit = betterAuthRateLimit ?? options?.rateLimit;
+  if (!secondaryStorage) {
+    return userRateLimit;
+  }
+  return {
+    storage: 'secondary-storage',
+    ...userRateLimit,
+  };
+}
+
 export function createAuth(env: AuthEnv, options?: CreateAuthOptions): AuthInstance;
 export function createAuth(options: CreateAuthOptions, env?: AuthEnv): AuthInstance;
 export function createAuth(
@@ -318,6 +392,8 @@ export function createAuth(
   const plugins = buildPlugins(options);
   const secondaryStorage = buildSecondaryStorage(options, env);
   const { database, pool } = buildDatabase(options, env);
+  const session = buildSessionConfig(options);
+  const rateLimit = buildRateLimitConfig(options, secondaryStorage);
 
   const defaults = {
     basePath: '/api/auth',
@@ -337,6 +413,8 @@ export function createAuth(
     ...(secondaryStorage !== undefined && { secondaryStorage }),
     plugins,
     ...options?.betterAuth,
+    session,
+    ...(rateLimit !== undefined && { rateLimit }),
   };
 
   // @ts-expect-error betterAuth accepts custom database adapters like D1/Hyperdrive in Cloudflare Workers
