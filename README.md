@@ -1,8 +1,14 @@
 # better-auth-workers
 
-[Better Auth](https://better-auth.com) on Cloudflare Workers, without the parts you would otherwise write by hand: a per-request auth instance built from your bindings, Postgres through Hyperdrive or D1 as the primary store, KV for session caching and rate limiting, phone OTP with delivery you control, and a session client so other Workers can trust the same login over a service binding.
+[Better Auth](https://better-auth.com) on Cloudflare Workers. It handles the parts you'd otherwise write by hand:
 
-It is a thin layer. Better Auth's options, plugins and clients are all still yours to use directly. This package only handles the Workers-specific plumbing and the cross-Worker session contract.
+- Builds a per-request auth instance from your Worker bindings.
+- Stores data in Postgres (through Hyperdrive) or D1.
+- Caches sessions and rate limits in KV.
+- Runs phone OTP delivery your way.
+- Lets other Workers trust the same login over a service binding.
+
+It's a thin layer. Better Auth's options, plugins and clients still work the same way — this package only adds the Workers-specific plumbing and the cross-Worker session contract.
 
 > **Status:** pre-release. The API described here is the target for 0.1.0 and may change before then.
 
@@ -30,14 +36,14 @@ It is a thin layer. Better Auth's options, plugins and clients are all still you
 
 ## Why this exists
 
-Better Auth assumes a long-lived process where the auth instance is created once at module scope. Workers do not work that way:
+Better Auth expects a long-lived process, where you build the auth instance once and keep it around. Workers don't work that way, for four reasons:
 
-- **Bindings only exist inside the request.** The database, KV namespace and secrets arrive on `env`, so the auth instance has to be built per request and memoised carefully.
-- **Memory is per isolate.** Anything Better Auth keeps in memory, such as rate-limit counters, is invisible to the next isolate. That state has to live in KV.
-- **Database connections are per request.** A Postgres pool cannot be shared across requests on Workers. It is created from the Hyperdrive connection string inside the handler and released after the response.
-- **Sessions are checked by other Workers.** In a Workers architecture the auth Worker is usually not the one serving the API. The API Worker needs a cheap, cached way to ask "who is this?" over a service binding.
+- **Bindings only exist inside a request.** The database, KV namespace and secrets all arrive on `env`. So the auth instance has to be built per request — carefully memoised, so that's cheap.
+- **Memory doesn't survive between requests.** Anything Better Auth keeps in memory, like rate-limit counters, is gone by the next isolate. That state has to live in KV instead.
+- **Database connections are per request too.** A Postgres pool can't be shared across requests on Workers. It's created fresh from the Hyperdrive connection string inside the handler, and released when the response is sent.
+- **Other Workers need to check sessions.** The Worker serving your API usually isn't the one handling login. It needs a cheap way to ask "who is this?" over a service binding.
 
-This package does those four things and stops.
+This package solves those four problems, and nothing else.
 
 ## Features
 
@@ -173,9 +179,9 @@ database: {
 }
 ```
 
-A `pg` Pool is created per request from `env.HYPERDRIVE.connectionString` with a small `max`, handed to Better Auth, and ended after the response through `waitUntil`. Better Auth talks to it through its bundled Kysely dialect; you never write a query.
+On each request, a small `pg` Pool is created from `env.HYPERDRIVE.connectionString` and handed to Better Auth. It closes itself after the response, via `waitUntil`. Better Auth talks to it through its bundled Kysely dialect, so you never write a query yourself.
 
-Hyperdrive keeps the real connections warm on Cloudflare's side, so per-request pools are cheap.
+Hyperdrive keeps the real database connections warm behind the scenes, which is what makes creating a new pool on every request cheap.
 
 ### D1
 
@@ -185,7 +191,7 @@ database: {
 }
 ```
 
-Better Auth's D1 dialect is used directly: the D1 binding is passed straight through as Better Auth's database config. D1 has a free tier that comfortably covers a small application's auth traffic, so a Worker that has no other database can still run full auth. For local development with `wrangler dev`, apply migrations to the local database with `wrangler d1 migrations apply <db> --local`.
+The D1 binding is passed straight through as Better Auth's database config, using Better Auth's D1 dialect directly. D1's free tier comfortably covers a small application's auth traffic, so even a Worker with no other database can run full auth on it. For local development with `wrangler dev`, apply migrations to the local database first: `wrangler d1 migrations apply <db> --local`.
 
 ### Choosing
 
@@ -193,12 +199,12 @@ Use Postgres when your application data already lives there and you want foreign
 
 ## Sessions and rate limiting on KV
 
-`kv` is required. It is wired as Better Auth's secondary storage, which does two things:
+`kv` is required. It's wired up as Better Auth's secondary storage, which is used for two things:
 
-- **Session cache.** Session lookups hit KV before the database. With cookie caching enabled (Better Auth's default in this package) most requests never reach the primary store.
-- **Rate limiter storage.** Better Auth's rate limiter is set to use secondary storage, so limits are shared across isolates instead of being per-isolate memory.
+- **Session cache.** Session lookups check KV before the database. With cookie caching on (this package's default), most requests never reach the primary store at all.
+- **Rate limiting.** Better Auth's rate limiter is set to use KV, so limits are shared across isolates instead of living in per-isolate memory.
 
-**Consistency caveat.** KV is eventually consistent, typically within a minute across locations. Rate limits are therefore soft: a burst spread across regions can exceed the configured limit briefly. For most applications this is fine. If you need hard per-phone limits on OTP requests, put a Durable Object counter in front of `sendOTP`; the package does not do this for you.
+**A consistency caveat.** KV is eventually consistent — usually within a minute across locations. That makes rate limits soft: a burst spread across regions can briefly exceed the configured limit. That's fine for most applications. If you need a hard per-phone limit on OTP requests, put a Durable Object counter in front of `sendOTP` yourself; this package doesn't do that for you.
 
 ## Phone OTP
 
@@ -215,14 +221,14 @@ phone: {
 }
 ```
 
-What the package does around your function:
+Here's what the package does around your function:
 
-- Runs it under `ctx.waitUntil` so the sign-in response returns immediately and delivery time cannot be used to infer whether a number exists.
-- Does not queue it. A code that arrives after it expires is worse than no code.
-- Rethrows delivery failures into the Worker's logs, but never into the client response.
-- Never logs the code.
+- Runs it under `ctx.waitUntil`, so the sign-in response returns right away. Delivery time can't be used to guess whether a phone number exists.
+- Doesn't queue it. A code that arrives after it's expired is worse than no code at all.
+- Sends delivery failures to the Worker's logs, never to the client response.
+- Never logs the code itself.
 
-Phone numbers are validated as E.164 before `sendOTP` is called. If your users type local formats, normalise on the client or in a `betterAuth.hooks.before` hook.
+Phone numbers must be E.164 before `sendOTP` is called. If your users type local formats, normalise them on the client, or in a `betterAuth.hooks.before` hook.
 
 **Delivery over a service binding.** If delivery lives in another Worker, bind it and call it:
 
@@ -242,21 +248,23 @@ Service-binding calls stay inside Cloudflare's network and never traverse the pu
 google: true;
 ```
 
-reads `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` from `env`. Pass an object to supply them explicitly. Register `<baseURL><basePath>/callback/google` as an authorised redirect URI in the Google Cloud console.
+reads `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` from `env`. To supply them explicitly instead, pass an object with `clientId` and `clientSecret`.
+
+In the Google Cloud console, register `<baseURL><basePath>/callback/google` as an authorised redirect URI.
 
 ## Restricting sign-in methods
 
-Some deployments should accept only some methods. An internal admin app might allow Google and nothing else, even though the same package is configured with phone OTP elsewhere.
+Some deployments should only accept some sign-in methods. An internal admin app might allow Google and nothing else, even if the same package elsewhere is configured with phone OTP too.
 
 ```ts
 allowedMethods: ['google'];
 ```
 
-installs a `before` hook that rejects requests to any other sign-in route with `403`. The rejected routes are still mounted, so clients get a clear error rather than a `404`.
+This installs a `before` hook that rejects requests to any other sign-in route with `403`. Those routes stay mounted, so clients get a clear error instead of a `404`.
 
 ## Using sessions from another Worker
 
-Most Workers architectures put auth in one Worker and the API in another. The API needs to know who is calling without owning the auth tables.
+Most Workers architectures put auth in one Worker and the API in another. The API Worker needs to know who's calling, without owning the auth tables itself.
 
 Bind the auth Worker as a service:
 
@@ -291,21 +299,39 @@ app.get('/me', async (c) => {
 });
 ```
 
-Or use the middleware:
+Or use the middleware. `requireSession` takes the `SessionClient` explicitly — the same per-request `env`-bound instance created above — rather than building its own, so it composes with whatever setup created that client:
 
 ```ts
 import { requireSession } from 'better-auth-workers/client';
 
-app.get('/me', requireSession(), (c) => c.json(c.get('session').user));
+app.get(
+  '/me',
+  (c, next) => requireSession({ client: c.get('sessions') })(c, next),
+  (c) => c.json(c.get('session').user)
+);
+```
+
+`requireSession` also accepts a `predicate` for role checks, returning 403 when it fails:
+
+```ts
+app.get(
+  '/admin',
+  (c, next) =>
+    requireSession({ client: c.get('sessions'), predicate: (s) => s.user.role === 'admin' })(
+      c,
+      next
+    ),
+  (c) => c.json(c.get('session').user)
+);
 ```
 
 How it works:
 
-1. The client forwards the incoming request's `Cookie` (or `Authorization`) header to the auth Worker's `get-session` route over the service binding.
-2. The result is cached in KV under the session token for the remaining session lifetime.
-3. Sign-out and session revocation in the auth Worker delete the KV entry, so the API sees the change on the next request.
+1. The client forwards the request's `Cookie` (or `Authorization`) header to the auth Worker's `get-session` route, over the service binding.
+2. The result is cached in KV, under the session token, for the rest of the session's lifetime.
+3. When the auth Worker signs out or revokes a session, it deletes that KV entry — so the API sees the change on its very next request.
 
-Sharing the KV namespace between the two Workers is what makes step 3 work. Using separate namespaces still functions, but revocation is only visible after the cache entry expires.
+Step 3 only works if both Workers share the same KV namespace. Separate namespaces still work, but revocation won't be visible until the cache entry expires on its own.
 
 ## Non-browser clients
 
@@ -315,7 +341,7 @@ Enable the bearer plugin:
 bearer: true;
 ```
 
-Clients then receive the session token in a `set-auth-token` response header after sign-in and send it back as `Authorization: Bearer <token>`. `createSessionClient` accepts either cookies or bearer tokens.
+After sign-in, clients receive the session token in a `set-auth-token` response header, and send it back as `Authorization: Bearer <token>`. `createSessionClient` accepts either cookies or bearer tokens — no extra setup needed.
 
 ## Migrations
 
@@ -351,12 +377,12 @@ Schema changes in this package are always a major version bump.
 
 ## Routing
 
-The auth Worker should be same-origin with the app that sets its cookies. Two ways:
+The auth Worker should share an origin with the app that sets its cookies. Two ways to do that:
 
-- **Cloudflare route.** Route `example.com/auth/*` to the auth Worker and everything else to your app. No code involved.
-- **Proxy through the app Worker.** Bind the auth Worker as a service and forward `/auth/*` to it. Useful when the app Worker already fronts everything.
+- **Cloudflare route.** Route `example.com/auth/*` to the auth Worker, and everything else to your app. No code needed.
+- **Proxy through the app Worker.** Bind the auth Worker as a service, and forward `/auth/*` to it. Handy when the app Worker already fronts everything.
 
-Cross-origin deployments work with Better Auth's `trustedOrigins` and cross-subdomain cookie settings, passed through `betterAuth`, but same-origin is simpler and is the tested path.
+Cross-origin deployments are possible too, using Better Auth's `trustedOrigins` and cross-subdomain cookie settings (passed through `betterAuth`). But same-origin is simpler, and it's the path this package is tested against.
 
 ## Local development
 
@@ -384,19 +410,19 @@ Hono is an optional peer dependency. `createAuth` and `createSessionClient` work
 ## FAQ
 
 **How is this different from better-auth-cloudflare?**
-That package integrates Better Auth with Cloudflare through Drizzle and adds geolocation and R2 helpers. This one uses `pg` or D1 directly with no ORM, ships SQL rather than a schema file, and adds the cross-Worker session client. Pick whichever matches how you already access your database.
+That package integrates Better Auth with Cloudflare through Drizzle, and adds geolocation and R2 helpers. This one talks to `pg` or D1 directly (no ORM), ships SQL instead of a schema file, and adds the cross-Worker session client. Pick whichever matches how you already access your database.
 
 **Why is the auth instance created per request?**
-Because bindings arrive on `env`, which only exists inside the handler. The instance is memoised per `env` object, so within an isolate the cost is paid once.
+Because bindings only arrive on `env`, which only exists inside the handler. The instance is memoised per `env` object, so within one isolate you only pay that cost once.
 
-**Can I use Better Auth features this package does not mention?**
-Yes. `plugins` and `betterAuth` pass straight through. The package does not hide or rename anything in Better Auth.
+**Can I use Better Auth features this package doesn't mention?**
+Yes. `plugins` and `betterAuth` pass straight through — this package never hides or renames anything in Better Auth.
 
 **Does it manage users, roles or organisations?**
-Only through Better Auth's own plugins. The admin plugin is enabled for role checks; organisations, passkeys, multi-session and MFA are Better Auth plugins you can add through `plugins`.
+Only through Better Auth's own plugins. The admin plugin is on by default for role checks. Organisations, passkeys, multi-session and MFA are all Better Auth plugins you can add through `plugins`.
 
 **Is the rate limiter safe for OTP?**
-It is shared across isolates through KV, which is what most applications need. It is not a hard limit because KV is eventually consistent. See [Sessions and rate limiting on KV](#sessions-and-rate-limiting-on-kv).
+It's shared across isolates through KV, which covers what most applications need. It's not a hard limit, though — KV is eventually consistent. See [Sessions and rate limiting on KV](#sessions-and-rate-limiting-on-kv).
 
 ## Contributing
 
