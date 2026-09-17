@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from 'bun:test';
-import { createSessionClient } from '../src/client';
+import { createSessionClient } from '../../src/client';
 
 interface SessionClientOptions {
   auth: { fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> };

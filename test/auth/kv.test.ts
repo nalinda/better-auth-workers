@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
-import { createAuth } from '../src/index';
+import { createAuth } from '../../src/index';
 
 class FakeKV {
   readonly store = new Map<string, string>();

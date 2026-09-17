@@ -1,0 +1,89 @@
+import { betterAuth } from 'better-auth';
+
+import type { AuthEnv } from '../types';
+import { buildRateLimitConfig, buildSessionConfig } from './config';
+import { buildDatabase, resolveHyperdriveConnectionString } from './database';
+import { resolveBaseURL, resolveSecret } from './env';
+import { type CreateAuthOptions, getOptionsKey, normalizeArgs } from './options';
+import { buildPlugins } from './plugins';
+import { withPoolLifecycle } from './postgres-pool';
+import { buildSecondaryStorage } from './secondary-storage';
+
+export type AuthInstance = ReturnType<typeof betterAuth>;
+
+const instanceCache = new WeakMap<object, Map<string, AuthInstance>>();
+
+function getCachedInstance(env: object, optionsKey: string): AuthInstance | undefined {
+  return instanceCache.get(env)?.get(optionsKey);
+}
+
+function setCachedInstance(env: object, optionsKey: string, instance: AuthInstance): void {
+  let envMap = instanceCache.get(env);
+  if (!envMap) {
+    envMap = new Map();
+    instanceCache.set(env, envMap);
+  }
+  envMap.set(optionsKey, instance);
+}
+
+export function createAuth(env: AuthEnv, options?: CreateAuthOptions): AuthInstance;
+export function createAuth(options: CreateAuthOptions, env?: AuthEnv): AuthInstance;
+export function createAuth(
+  arg1: AuthEnv | CreateAuthOptions,
+  arg2?: CreateAuthOptions | AuthEnv
+): AuthInstance {
+  const { env, options } = normalizeArgs(arg1, arg2);
+  const isHyperdrive = Boolean(resolveHyperdriveConnectionString(options, env));
+  const optionsKey = getOptionsKey(options);
+
+  if (!isHyperdrive) {
+    const cached = getCachedInstance(env, optionsKey);
+    if (cached) {
+      return cached;
+    }
+  }
+
+  const baseURL = resolveBaseURL(options, env);
+  const secret = resolveSecret(options, env);
+  const plugins = buildPlugins(options);
+  const secondaryStorage = buildSecondaryStorage(options, env);
+  const { database, pool } = buildDatabase(options, env);
+  const session = buildSessionConfig(options);
+  const rateLimit = buildRateLimitConfig(options, secondaryStorage);
+
+  const defaults = {
+    basePath: '/api/auth',
+    advanced: {
+      database: {
+        validateSchema: false,
+      },
+    },
+  };
+
+  const authConfig = {
+    ...defaults,
+    ...options,
+    baseURL,
+    secret,
+    ...(database !== undefined && { database }),
+    ...(secondaryStorage !== undefined && { secondaryStorage }),
+    plugins,
+    ...options?.betterAuth,
+    session,
+    ...(rateLimit !== undefined && { rateLimit }),
+  };
+
+  // @ts-expect-error betterAuth accepts custom database adapters like D1/Hyperdrive in Cloudflare Workers
+  const instance = betterAuth(authConfig);
+  void instance.$context.catch(() => {});
+
+  if (pool) {
+    withPoolLifecycle(instance, pool, options?.ctx);
+  }
+
+  if (!isHyperdrive) {
+    setCachedInstance(env, optionsKey, instance);
+  }
+
+  return instance;
+}
