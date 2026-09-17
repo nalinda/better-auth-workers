@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
+
 import { createAuth } from '../../src/index';
 
 interface MockPoolConfig {
@@ -21,6 +22,17 @@ mock.module('pg', () => ({
   Pool: MockPool,
   default: { Pool: MockPool },
 }));
+
+interface AuthInstanceLike {
+  options: { database?: unknown };
+}
+
+type LooseCreateAuth = (
+  arg1: Record<string, unknown>,
+  arg2?: Record<string, unknown>
+) => AuthInstanceLike;
+
+const callCreateAuth = createAuth as unknown as LooseCreateAuth;
 
 function createMockD1() {
   return {
@@ -52,7 +64,7 @@ describe('D1 as the primary store', () => {
     it('passes the D1 binding straight through as Better Auth database config when called as createAuth({ database: { d1 } }, env)', () => {
       const mockD1 = createMockD1();
       const env = { ...validEnv };
-      const auth = (createAuth as any)(
+      const auth = callCreateAuth(
         {
           database: { d1: mockD1 },
         },
@@ -66,7 +78,7 @@ describe('D1 as the primary store', () => {
     it('passes the D1 binding straight through when called as createAuth(env, { database: { d1 } })', () => {
       const mockD1 = createMockD1();
       const env = { ...validEnv };
-      const auth = (createAuth as any)(env, {
+      const auth = callCreateAuth(env, {
         database: { d1: mockD1 },
       });
 
@@ -81,7 +93,7 @@ describe('D1 as the primary store', () => {
         DB: mockD1,
       };
 
-      const auth = (createAuth as any)(envWithD1);
+      const auth = callCreateAuth(envWithD1);
 
       expect(auth?.options?.database).toBe(mockD1);
       expect(capturedPools.length).toBe(0);
@@ -93,10 +105,10 @@ describe('D1 as the primary store', () => {
         BETTER_AUTH_SECRET: validSecret,
       };
 
-      expect(() => (createAuth as any)(envWithoutDb)).toThrow(/database/i);
-      expect(() => (createAuth as any)(envWithoutDb, {})).toThrow(/database/i);
-      expect(() => (createAuth as any)(envWithoutDb, { database: {} })).toThrow(/database/i);
-      expect(() => (createAuth as any)({}, envWithoutDb)).toThrow(/database/i);
+      expect(() => callCreateAuth(envWithoutDb)).toThrow(/database/i);
+      expect(() => callCreateAuth(envWithoutDb, {})).toThrow(/database/i);
+      expect(() => callCreateAuth(envWithoutDb, { database: {} })).toThrow(/database/i);
+      expect(() => callCreateAuth({}, envWithoutDb)).toThrow(/database/i);
     });
 
     it('memoises the Better Auth instance on env across calls when using D1', () => {
@@ -106,8 +118,8 @@ describe('D1 as the primary store', () => {
         DB: mockD1,
       };
 
-      const auth1 = (createAuth as any)(envWithD1);
-      const auth2 = (createAuth as any)(envWithD1);
+      const auth1 = callCreateAuth(envWithD1);
+      const auth2 = callCreateAuth(envWithD1);
 
       expect(auth1).toBe(auth2);
     });

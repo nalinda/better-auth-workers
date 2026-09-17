@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
+
 import { createAuth } from '../../src/index';
 
 class FakeKV {
@@ -43,7 +44,7 @@ interface CreateAuthOptions {
   basePath?: string;
   baseURL?: string;
   secret?: string;
-  database?: { hyperdrive?: unknown; d1?: unknown } | unknown;
+  database?: { hyperdrive?: unknown; d1?: unknown };
   kv?: unknown;
   rateLimit?: {
     enabled?: boolean;
@@ -64,11 +65,30 @@ interface CreateAuthOptions {
   [key: string]: unknown;
 }
 
-const createAuthInstance = (env: Record<string, unknown>, options?: CreateAuthOptions): any =>
-  (createAuth as unknown as (e: Record<string, unknown>, o?: CreateAuthOptions) => any)(
-    env,
-    options
-  );
+interface AuthInstanceLike {
+  options: {
+    secondaryStorage?: {
+      get: (key: string) => Promise<string | null>;
+      set: (key: string, value: string, ttl?: number) => Promise<void>;
+      delete: (key: string) => Promise<void>;
+      increment?: (key: string, ttl: number) => Promise<number>;
+    };
+    session?: { cookieCache?: { enabled?: boolean } };
+    rateLimit?: { storage?: string };
+  };
+}
+
+type LooseCreateAuth = (
+  arg1: Record<string, unknown>,
+  arg2?: Record<string, unknown>
+) => AuthInstanceLike;
+
+const callCreateAuth = createAuth as unknown as LooseCreateAuth;
+
+const createAuthInstance = (
+  env: Record<string, unknown>,
+  options?: CreateAuthOptions
+): AuthInstanceLike => callCreateAuth(env, options);
 
 describe('KV secondary storage for session cache and rate limiter', () => {
   const validSecret = 'test-secret-at-least-32-chars-long-1234567890';
@@ -119,7 +139,7 @@ describe('KV secondary storage for session cache and rate limiter', () => {
 
     it('supports options first argument order: createAuth({ kv }, env)', () => {
       const mockKv = new FakeKV();
-      const auth = (createAuth as any)({ kv: mockKv }, validEnv);
+      const auth = callCreateAuth({ kv: mockKv }, validEnv);
       expect(auth?.options?.secondaryStorage).toBeDefined();
     });
 
@@ -129,10 +149,10 @@ describe('KV secondary storage for session cache and rate limiter', () => {
 
       expect(typeof auth?.options?.secondaryStorage?.increment).toBe('function');
 
-      const count1 = await auth?.options?.secondaryStorage?.increment('test-limit-key', 60);
+      const count1 = await auth?.options?.secondaryStorage?.increment?.('test-limit-key', 60);
       expect(count1).toBe(1);
 
-      const count2 = await auth?.options?.secondaryStorage?.increment('test-limit-key', 60);
+      const count2 = await auth?.options?.secondaryStorage?.increment?.('test-limit-key', 60);
       expect(count2).toBe(2);
     });
   });

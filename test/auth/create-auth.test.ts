@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+
 import { createAuth } from '../../src/index';
 
 interface CreateAuthOptions {
@@ -24,12 +25,26 @@ interface CreateAuthOptions {
   [key: string]: unknown;
 }
 
-// Typed wrapper to allow calling createAuth with env and options across red and green phases
-const createAuthInstance = (env: Record<string, unknown>, options?: CreateAuthOptions): any =>
-  (createAuth as unknown as (e: Record<string, unknown>, o?: CreateAuthOptions) => any)(
-    env,
-    options
-  );
+interface AuthInstanceLike {
+  handler: (request: Request) => Promise<Response>;
+  api?: unknown;
+  options: {
+    basePath?: string;
+    baseURL?: string;
+    secret?: string;
+    database?: unknown;
+    secondaryStorage?: unknown;
+    plugins?: Array<{ id: string }>;
+  };
+}
+
+const createAuthInstance = (
+  env: Record<string, unknown>,
+  options?: CreateAuthOptions
+): AuthInstanceLike =>
+  (
+    createAuth as unknown as (e: Record<string, unknown>, o?: CreateAuthOptions) => AuthInstanceLike
+  )(env, options);
 
 describe('createAuth: per-request Better Auth instance memoised on env', () => {
   const validSecret = 'test-secret-at-least-32-chars-long-1234567890';
@@ -67,8 +82,8 @@ describe('createAuth: per-request Better Auth instance memoised on env', () => {
         DB: mockD1,
       };
       const auth = createAuthInstance(envWithBindings, {
-        kv: envWithBindings.AUTH_KV as any,
-        database: { d1: envWithBindings.DB as any },
+        kv: envWithBindings.AUTH_KV,
+        database: { d1: envWithBindings.DB },
       });
       expect(auth?.options?.database).toBeDefined();
       expect(auth?.options?.secondaryStorage).toBeDefined();
@@ -186,7 +201,7 @@ describe('createAuth: per-request Better Auth instance memoised on env', () => {
   describe('Plugin configuration', () => {
     it('enables the admin plugin by default without phone or bearer plugins', () => {
       const auth = createAuthInstance(validEnv, {});
-      const pluginIds = auth?.options?.plugins?.map((p: any) => p.id) ?? [];
+      const pluginIds = auth?.options?.plugins?.map((p) => p.id) ?? [];
       expect(pluginIds).toEqual(['admin']);
     });
 
@@ -195,7 +210,7 @@ describe('createAuth: per-request Better Auth instance memoised on env', () => {
         bearer: false,
         phone: undefined,
       });
-      const pluginIds = auth?.options?.plugins?.map((p: any) => p.id) ?? [];
+      const pluginIds = auth?.options?.plugins?.map((p) => p.id) ?? [];
       expect(pluginIds).toEqual(['admin']);
     });
 
@@ -205,7 +220,7 @@ describe('createAuth: per-request Better Auth instance memoised on env', () => {
           sendOTP: async () => {},
         },
       });
-      const pluginIds = auth?.options?.plugins?.map((p: any) => p.id) ?? [];
+      const pluginIds = auth?.options?.plugins?.map((p) => p.id) ?? [];
       expect(pluginIds).toEqual(['admin', 'phone-number']);
     });
 
@@ -213,7 +228,7 @@ describe('createAuth: per-request Better Auth instance memoised on env', () => {
       const auth = createAuthInstance(validEnv, {
         bearer: true,
       });
-      const pluginIds = auth?.options?.plugins?.map((p: any) => p.id) ?? [];
+      const pluginIds = auth?.options?.plugins?.map((p) => p.id) ?? [];
       expect(pluginIds).toEqual(['admin', 'bearer']);
     });
 
@@ -224,7 +239,7 @@ describe('createAuth: per-request Better Auth instance memoised on env', () => {
         },
         bearer: true,
       });
-      const pluginIds = auth?.options?.plugins?.map((p: any) => p.id) ?? [];
+      const pluginIds = auth?.options?.plugins?.map((p) => p.id) ?? [];
       expect(pluginIds).toEqual(['admin', 'phone-number', 'bearer']);
     });
 
@@ -237,7 +252,7 @@ describe('createAuth: per-request Better Auth instance memoised on env', () => {
         bearer: true,
         plugins: [customPlugin],
       });
-      const pluginIds = auth?.options?.plugins?.map((p: any) => p.id) ?? [];
+      const pluginIds = auth?.options?.plugins?.map((p) => p.id) ?? [];
       expect(pluginIds).toEqual(['admin', 'phone-number', 'bearer', 'custom-audit-plugin']);
     });
   });

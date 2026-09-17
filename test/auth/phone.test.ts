@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
+
 import { createAuth } from '../../src/index';
 
 function createMockD1() {
@@ -49,10 +50,7 @@ interface CreateAuthOptions {
   [key: string]: unknown;
 }
 
-const createAuthInstance = (
-  env: Record<string, unknown>,
-  options?: CreateAuthOptions
-): {
+interface AuthInstanceLike {
   handler: (
     req: Request,
     ctx?: { waitUntil: (promise: Promise<unknown>) => void }
@@ -66,11 +64,15 @@ const createAuthInstance = (
     [key: string]: unknown;
   };
   [key: string]: unknown;
-} =>
-  (createAuth as unknown as (e: Record<string, unknown>, o?: CreateAuthOptions) => any)(
-    env,
-    options
-  );
+}
+
+const createAuthInstance = (
+  env: Record<string, unknown>,
+  options?: CreateAuthOptions
+): AuthInstanceLike =>
+  (
+    createAuth as unknown as (e: Record<string, unknown>, o?: CreateAuthOptions) => AuthInstanceLike
+  )(env, options);
 
 describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
   const validSecret = 'test-secret-at-least-32-chars-long-1234567890';
@@ -87,14 +89,11 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
 
   describe('Asynchronous delivery under waitUntil', () => {
     it('returns the response before a slow sendOTP resolves and delegates delivery to ctx.waitUntil', async () => {
-      let resolveSlowSend!: () => void;
-      const slowSendPromise = new Promise<void>((resolve) => {
-        resolveSlowSend = resolve;
-      });
-      let sendOTPDone = false;
+      const { promise: slowSendPromise, resolve: resolveSlowSend } = Promise.withResolvers<void>();
+      let isSendOTPDone = false;
       const sendOTP = mock(async () => {
         await slowSendPromise;
-        sendOTPDone = true;
+        isSendOTPDone = true;
       });
 
       const { ctx, promises } = createMockExecutionContext();
@@ -109,11 +108,11 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
         body: JSON.stringify({ phoneNumber: '+15551234567' }),
       });
 
-      let handlerCompleted = false;
+      let isHandlerCompleted = false;
       let response: Response | undefined;
 
       const handlerPromise = auth.handler(req, ctx).then((res: Response) => {
-        handlerCompleted = true;
+        isHandlerCompleted = true;
         response = res;
         return res;
       });
@@ -121,15 +120,15 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
       try {
         await new Promise((resolve) => setTimeout(resolve, 30));
 
-        expect(handlerCompleted).toBe(true);
+        expect(isHandlerCompleted).toBe(true);
         expect(response?.status).toBe(200);
-        expect(sendOTPDone).toBe(false);
+        expect(isSendOTPDone).toBe(false);
         expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
 
         resolveSlowSend();
         await Promise.all(promises);
         await handlerPromise;
-        expect(sendOTPDone).toBe(true);
+        expect(isSendOTPDone).toBe(true);
       } finally {
         resolveSlowSend();
       }
@@ -274,7 +273,7 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
         },
       });
 
-      const phonePlugin = auth?.options?.plugins?.find((p: any) => p.id === 'phone-number');
+      const phonePlugin = auth?.options?.plugins?.find((p) => p.id === 'phone-number');
       expect(phonePlugin?.options?.otpLength).toBe(6);
       expect(phonePlugin?.options?.expiresIn).toBe(300);
       expect(phonePlugin?.options?.allowedAttempts).toBe(3);
@@ -288,7 +287,7 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
         },
       });
 
-      const customPlugin = customAuth?.options?.plugins?.find((p: any) => p.id === 'phone-number');
+      const customPlugin = customAuth?.options?.plugins?.find((p) => p.id === 'phone-number');
       expect(customPlugin?.options?.otpLength).toBe(8);
       expect(customPlugin?.options?.expiresIn).toBe(600);
       expect(customPlugin?.options?.allowedAttempts).toBe(5);

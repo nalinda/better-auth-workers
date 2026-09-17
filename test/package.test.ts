@@ -1,21 +1,38 @@
-import { describe, expect, it } from 'bun:test';
 import fs from 'node:fs';
 import path from 'node:path';
 
-function readPackageJson(): any {
-  const pkgPath = path.resolve(import.meta.dir, '../package.json');
-  if (!fs.existsSync(pkgPath)) return undefined;
-  return JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+import { describe, expect, it } from 'bun:test';
+
+interface PackageJson {
+  name?: string;
+  exports?: Record<string, unknown>;
+  peerDependencies?: Record<string, string>;
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+  devDependencies?: Record<string, string>;
+  scripts?: Record<string, string>;
 }
 
-function readTsConfig(): any {
+interface TsConfig {
+  compilerOptions?: {
+    strict?: boolean;
+    types?: string[];
+  };
+}
+
+function readPackageJson(): PackageJson | undefined {
+  const pkgPath = path.resolve(import.meta.dir, '../package.json');
+  if (!fs.existsSync(pkgPath)) return undefined;
+  return JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as PackageJson;
+}
+
+function readTsConfig(): TsConfig | undefined {
   const tsconfigPath = path.resolve(import.meta.dir, '../tsconfig.json');
   if (!fs.existsSync(tsconfigPath)) return undefined;
   const content = fs
     .readFileSync(tsconfigPath, 'utf8')
-    .replace(/\/\/.*$/gm, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-  return JSON.parse(content);
+    .replaceAll(/\/\/[^\n]*/g, '')
+    .replaceAll(/\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\//g, '');
+  return JSON.parse(content) as TsConfig;
 }
 
 function readWorkflows(): string {
@@ -73,25 +90,12 @@ describe('Package scaffolding and metadata', () => {
     expect(pkg?.devDependencies?.['wrangler'] ?? '').toMatch(/^\^4/);
   });
 
-  it('package.json defines test script', () => {
-    const pkg = readPackageJson();
-    expect(pkg?.scripts?.['test']).toBeDefined();
-  });
-
-  it('package.json defines ts-check script', () => {
-    const pkg = readPackageJson();
-    expect(pkg?.scripts?.['ts-check']).toBeDefined();
-  });
-
-  it('package.json defines lint script', () => {
-    const pkg = readPackageJson();
-    expect(pkg?.scripts?.['lint']).toBeDefined();
-  });
-
-  it('package.json defines build script', () => {
-    const pkg = readPackageJson();
-    expect(pkg?.scripts?.['build']).toBeDefined();
-  });
+  for (const script of ['test', 'ts-check', 'lint', 'build']) {
+    it(`package.json defines ${script} script`, () => {
+      const pkg = readPackageJson();
+      expect(pkg?.scripts?.[script]).toBeDefined();
+    });
+  }
 
   it('tsconfig.json enables strict mode', () => {
     const tsconfig = readTsConfig();

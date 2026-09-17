@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
+
 import { createAuth } from '../../src/index';
 
 interface MockPoolConfig {
@@ -14,11 +15,6 @@ class MockPool {
   endCalls = 0;
   ended = false;
 
-  constructor(options: MockPoolConfig) {
-    this.options = options;
-    capturedPools.push(this);
-  }
-
   connect = mock(() =>
     Promise.resolve({
       query: mock((_sql: unknown) => Promise.resolve({ rows: [] })),
@@ -31,6 +27,11 @@ class MockPool {
     this.ended = true;
     return Promise.resolve();
   });
+
+  constructor(options: MockPoolConfig) {
+    this.options = options;
+    capturedPools.push(this);
+  }
 }
 
 mock.module('pg', () => ({
@@ -62,12 +63,18 @@ interface CreateAuthOptions {
   [key: string]: unknown;
 }
 
-// Typed wrapper to allow calling createAuth with env, options and handler context across red and green phases
-const createAuthInstance = (env: Record<string, unknown>, options?: CreateAuthOptions): any =>
-  (createAuth as unknown as (e: Record<string, unknown>, o?: CreateAuthOptions) => any)(
-    env,
-    options
-  );
+interface AuthInstanceLike {
+  handler: (request: Request, ctx?: unknown) => Promise<Response>;
+  options: { database?: unknown };
+}
+
+const createAuthInstance = (
+  env: Record<string, unknown>,
+  options?: CreateAuthOptions
+): AuthInstanceLike =>
+  (
+    createAuth as unknown as (e: Record<string, unknown>, o?: CreateAuthOptions) => AuthInstanceLike
+  )(env, options);
 
 describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
   const validSecret = 'test-secret-at-least-32-chars-long-1234567890';
@@ -94,7 +101,7 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
       });
 
       expect(capturedPools.length).toBe(1);
-      const pool = capturedPools[0]!;
+      const pool = capturedPools[0];
       expect(pool.options.connectionString).toBe(connectionString);
       expect(typeof pool.options.max).toBe('number');
       expect(pool.options.max!).toBeGreaterThan(0);
@@ -126,7 +133,7 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
       const auth = createAuthInstance(env);
 
       expect(capturedPools.length).toBe(1);
-      expect(capturedPools[0]!.options.connectionString).toBe(connectionString);
+      expect(capturedPools[0].options.connectionString).toBe(connectionString);
       expect(auth?.options?.database).toBe(capturedPools[0]);
     });
 
@@ -140,7 +147,7 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
       });
 
       expect(capturedPools.length).toBe(1);
-      expect(capturedPools[0]!.options.connectionString).toBe(customConnectionString);
+      expect(capturedPools[0].options.connectionString).toBe(customConnectionString);
     });
   });
 
@@ -224,8 +231,8 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
         betterAuth: { advanced: { database: { validateSchema: false } } },
       });
 
-      let poolEndedBeforeSettlement = false;
-      let handlerResolved = false;
+      let isPoolEndedBeforeSettlement = false;
+      let isHandlerResolved = false;
 
       const req = new Request('https://auth.example.com/api/auth/ok');
       try {
@@ -233,20 +240,20 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
         if (capturedPools[0]) {
           const originalEnd = capturedPools[0].end;
           capturedPools[0].end = mock(() => {
-            if (!handlerResolved) poolEndedBeforeSettlement = true;
+            if (!isHandlerResolved) isPoolEndedBeforeSettlement = true;
             return originalEnd();
           });
         }
         await handlerPromise;
-        handlerResolved = true;
+        isHandlerResolved = true;
       } catch {
-        handlerResolved = true;
+        isHandlerResolved = true;
       }
 
       // Allow the scheduled next-tick task to execute
-      await new Promise((r) => setTimeout(r, 10));
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
-      expect(poolEndedBeforeSettlement).toBe(false);
+      expect(isPoolEndedBeforeSettlement).toBe(false);
       expect(capturedPools[0]?.endCalls).toBe(1);
     });
   });
@@ -272,7 +279,9 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
 
       try {
         await auth1.handler(new Request('https://auth.example.com/api/auth/ok'), ctx1);
-      } catch {}
+      } catch {
+        // the mocked handler may reject; only the pool lifecycle is under test
+      }
 
       const ctx2 = {
         waitUntil: mock((_p: Promise<unknown>) => {}),
@@ -286,7 +295,9 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
 
       try {
         await auth2.handler(new Request('https://auth.example.com/api/auth/ok'), ctx2);
-      } catch {}
+      } catch {
+        // the mocked handler may reject; only the pool lifecycle is under test
+      }
 
       expect(capturedPools.length).toBe(2);
       expect(capturedPools[0]).not.toBe(capturedPools[1]);
@@ -316,7 +327,9 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
 
         try {
           await auth.handler(new Request('https://auth.example.com/api/auth/ok'), ctx);
-        } catch {}
+        } catch {
+          // the mocked handler may reject; only the pool lifecycle is under test
+        }
       }
 
       expect(capturedPools.length).toBe(requestCount);

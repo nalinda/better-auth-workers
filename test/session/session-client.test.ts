@@ -1,4 +1,5 @@
 import { describe, expect, it, mock } from 'bun:test';
+
 import { createSessionClient } from '../../src/client';
 
 interface SessionClientOptions {
@@ -7,13 +8,18 @@ interface SessionClientOptions {
   basePath?: string;
 }
 
+interface SessionResult {
+  session: { token: string; expiresAt: string; [key: string]: unknown };
+  user: { id: string; email?: string; [key: string]: unknown };
+}
+
 // Typed wrapper so the test compiles against the current stub signature and the final one alike
 const buildSessionClient = (
   options: SessionClientOptions
-): { get: (req: Request) => Promise<any> } =>
+): { get: (req: Request) => Promise<SessionResult | null> } =>
   (
     createSessionClient as unknown as (o: SessionClientOptions) => {
-      get: (req: Request) => Promise<any>;
+      get: (req: Request) => Promise<SessionResult | null>;
     }
   )(options);
 
@@ -89,7 +95,7 @@ function fakeAuthBinding(expiresAt: Date) {
 describe('createSessionClient verifies sessions over a service binding with a KV cache', () => {
   describe('get(request) with a valid session cookie', () => {
     it('forwards the Cookie header to the auth Worker get-session route over the service binding and returns the session', async () => {
-      const expiresAt = new Date(Date.now() + 3600_000);
+      const expiresAt = new Date(Date.now() + 3_600_000);
       const { binding, fetch, seen } = fakeAuthBinding(expiresAt);
       const kv = new FakeKV();
       const client = buildSessionClient({ auth: binding, kv, basePath: BASE_PATH });
@@ -100,18 +106,18 @@ describe('createSessionClient verifies sessions over a service binding with a KV
       const result = await client.get(incoming);
 
       expect(fetch).toHaveBeenCalledTimes(1);
-      const forwarded = seen[0]!;
+      const forwarded = seen[0];
       expect(new URL(forwarded.url).pathname).toBe(`${BASE_PATH}/get-session`);
       expect(forwarded.method).toBe('GET');
       expect(forwarded.headers.get('cookie')).toBe(VALID_COOKIE);
 
       expect(result).not.toBeNull();
-      expect(result.session.token).toBe(TOKEN);
-      expect(result.user.id).toBe('user-1');
+      expect(result!.session.token).toBe(TOKEN);
+      expect(result!.user.id).toBe('user-1');
     });
 
     it('accepts any plain Request without a framework wrapper', async () => {
-      const { binding } = fakeAuthBinding(new Date(Date.now() + 3600_000));
+      const { binding } = fakeAuthBinding(new Date(Date.now() + 3_600_000));
       const client = buildSessionClient({ auth: binding, kv: new FakeKV(), basePath: BASE_PATH });
 
       const result = await client.get(
@@ -127,7 +133,7 @@ describe('createSessionClient verifies sessions over a service binding with a KV
 
   describe('KV cache', () => {
     it('serves a second get(request) for the same session token from KV without calling the service binding again', async () => {
-      const { binding, fetch } = fakeAuthBinding(new Date(Date.now() + 3600_000));
+      const { binding, fetch } = fakeAuthBinding(new Date(Date.now() + 3_600_000));
       const kv = new FakeKV();
       const client = buildSessionClient({ auth: binding, kv, basePath: BASE_PATH });
       const makeRequest = () =>
@@ -138,8 +144,8 @@ describe('createSessionClient verifies sessions over a service binding with a KV
 
       expect(fetch).toHaveBeenCalledTimes(1);
       expect(second).not.toBeNull();
-      expect(second.session.token).toBe(first.session.token);
-      expect(second.user.id).toBe(first.user.id);
+      expect(second!.session.token).toBe(first!.session.token);
+      expect(second!.user.id).toBe(first!.user.id);
     });
 
     it('stores the session in KV keyed by the session token with a TTL equal to the remaining session lifetime', async () => {
@@ -154,7 +160,7 @@ describe('createSessionClient verifies sessions over a service binding with a KV
       );
 
       expect(kv.puts.length).toBe(1);
-      const put = kv.puts[0]!;
+      const put = kv.puts[0];
       expect(put.key).toContain(TOKEN);
       const ttl = put.options?.expirationTtl;
       expect(typeof ttl).toBe('number');
@@ -163,7 +169,7 @@ describe('createSessionClient verifies sessions over a service binding with a KV
     });
 
     it('lets a second client sharing the same KV namespace resolve the session without touching its service binding', async () => {
-      const expiresAt = new Date(Date.now() + 3600_000);
+      const expiresAt = new Date(Date.now() + 3_600_000);
       const kv = new FakeKV();
       const primary = fakeAuthBinding(expiresAt);
       const consumer = fakeAuthBinding(expiresAt);
@@ -187,7 +193,7 @@ describe('createSessionClient verifies sessions over a service binding with a KV
 
   describe('missing or invalid sessions', () => {
     it('returns null without throwing when the request carries no cookie', async () => {
-      const { binding } = fakeAuthBinding(new Date(Date.now() + 3600_000));
+      const { binding } = fakeAuthBinding(new Date(Date.now() + 3_600_000));
       const client = buildSessionClient({ auth: binding, kv: new FakeKV(), basePath: BASE_PATH });
 
       const result = await client.get(new Request('https://api.example.com/me'));
@@ -196,7 +202,7 @@ describe('createSessionClient verifies sessions over a service binding with a KV
     });
 
     it('returns null without throwing when the cookie does not match a session', async () => {
-      const { binding, fetch } = fakeAuthBinding(new Date(Date.now() + 3600_000));
+      const { binding, fetch } = fakeAuthBinding(new Date(Date.now() + 3_600_000));
       const kv = new FakeKV();
       const client = buildSessionClient({ auth: binding, kv, basePath: BASE_PATH });
 
