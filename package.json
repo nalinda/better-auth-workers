@@ -5,7 +5,26 @@
   "type": "module",
   "license": "MIT",
   "packageManager": "bun@1.4.0",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js",
+      "default": "./dist/client.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
+    "build": "bun build src/index.ts src/client.ts --outdir dist --packages external && tsc -p tsconfig.build.json",
     "lint": "eslint . --cache --cache-location .eslintcache --cache-strategy content",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -14,8 +33,22 @@
     "knip": "knip",
     "prepare": "husky && bun node_modules/@serendibyte-co/eslint-config/hooks/fix-hooks-path.sh"
   },
+  "peerDependencies": {
+    "better-auth": "^1.7.0",
+    "hono": "^4.0.0",
+    "pg": "^8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "hono": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
+    }
+  },
   "prettier": "@serendibyte-co/prettier-config",
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260917.1",
     "@serendibyte-co/eslint-config": "git+https://github.com/serendibyte-co/eslint-config.git#v1.4.1",
     "@serendibyte-co/prettier-config": "git+https://github.com/serendibyte-co/prettier-config.git#v1.0.2",
     "@types/bun": "^1.4.0",
@@ -24,7 +57,8 @@
     "knip": "^6.32.2",
     "lint-staged": "^17.3.0",
     "prettier": "^3.9.6",
-    "typescript": "~6.0.2"
+    "typescript": "~6.0.2",
+    "wrangler": "^4.0.0"
   },
   "trustedDependencies": [
     "unrs-resolver"
