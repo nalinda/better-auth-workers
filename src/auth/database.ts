@@ -1,10 +1,10 @@
 import type { AuthEnv, ConfigValue } from '../types';
+import { loadPgPoolClass, type PgPool } from './postgres-pool';
 import type {
   CreateAuthDatabaseOptions,
   CreateAuthOptions,
   HyperdriveDatabaseOption,
-} from './options';
-import { loadPgPoolClass, type PgPool } from './postgres-pool';
+} from './types';
 
 export type ResolvedDatabase =
   PgPool | D1Database | Record<string, (arg?: string) => void> | ConfigValue;

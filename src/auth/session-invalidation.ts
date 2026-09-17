@@ -1,6 +1,6 @@
 import { sessionCacheKey } from '../shared/session-cache';
 import type { AuthEnv, KVStore } from '../types';
-import type { CreateAuthOptions } from './options';
+import type { CreateAuthOptions } from './types';
 
 // Better Auth invokes `hooks.after` with the endpoint context of the route
 // handler that just ran. We only care about two paths: `/sign-out`, where the

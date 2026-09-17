@@ -1,7 +1,7 @@
 import type { SocialProviders } from 'better-auth';
 
 import type { AuthEnv } from '../../types';
-import type { CreateAuthOptions } from '../options';
+import type { CreateAuthOptions } from '../types';
 
 export function buildSocialProviders(
   options?: CreateAuthOptions,

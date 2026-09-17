@@ -5,11 +5,12 @@ import type { AuthEnv } from '../types';
 import { buildRateLimitConfig, buildSessionConfig } from './config';
 import { buildDatabase, resolveHyperdriveConnectionString } from './database';
 import { resolveBaseURL, resolveSecret } from './env';
-import { type CreateAuthOptions, getOptionsKey, normalizeArgs } from './options';
+import { getOptionsKey, normalizeArgs } from './normalize';
 import { buildPlugins, buildSocialProviders } from './plugins';
 import { withPoolLifecycle } from './postgres-pool';
 import { buildSecondaryStorage } from './secondary-storage';
 import { buildSessionInvalidationHook } from './session-invalidation';
+import type { CreateAuthOptions } from './types';
 
 export type AuthInstance = ReturnType<typeof betterAuth>;
 

@@ -1,7 +1,7 @@
 import type { BetterAuthPlugin } from 'better-auth';
 import { admin, bearer } from 'better-auth/plugins';
 
-import type { CreateAuthOptions } from '../options';
+import type { CreateAuthOptions } from '../types';
 import { buildPhonePlugin } from './phone';
 
 export { buildSocialProviders } from './google';

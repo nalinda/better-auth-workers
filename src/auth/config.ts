@@ -3,7 +3,7 @@ import type {
   CreateAuthRateLimitOptions,
   CreateAuthSecondaryStorage,
   CreateAuthSessionOptions,
-} from './options';
+} from './types';
 
 export function buildSessionConfig(options?: CreateAuthOptions): CreateAuthSessionOptions {
   const betterAuthSession = options?.betterAuth?.session as CreateAuthSessionOptions | undefined;

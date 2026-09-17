@@ -1,5 +1,5 @@
 import type { AuthEnv, KVStore } from '../types';
-import type { CreateAuthOptions, CreateAuthSecondaryStorage } from './options';
+import type { CreateAuthOptions, CreateAuthSecondaryStorage } from './types';
 
 function resolveKv(options?: CreateAuthOptions, envObj?: AuthEnv): KVStore | undefined {
   const kv = (options?.kv ?? envObj?.AUTH_KV) as KVStore | undefined;

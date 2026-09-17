@@ -10,5 +10,5 @@ export type {
   CreateAuthSecondaryStorage,
   CreateAuthSessionOptions,
   HyperdriveDatabaseOption,
-} from './auth/options';
+} from './auth/types';
 export type { AuthEnv, ConfigValue, ExecutionContext, KVStore } from './types';

@@ -3,7 +3,7 @@ import { phoneNumber } from 'better-auth/plugins';
 
 import { getExecutionContext, runNonBlocking } from '../../shared/non-blocking';
 import type { ExecutionContext } from '../../types';
-import type { CreateAuthPhoneOptions } from '../options';
+import type { CreateAuthPhoneOptions } from '../types';
 
 const E164_REGEX = /^\+[1-9]\d{1,14}$/;
 

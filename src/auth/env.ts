@@ -1,5 +1,5 @@
 import type { AuthEnv } from '../types';
-import type { CreateAuthOptions } from './options';
+import type { CreateAuthOptions } from './types';
 
 export function resolveBaseURL(options?: CreateAuthOptions, envObj?: AuthEnv): string {
   const baseURL =
