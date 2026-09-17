@@ -1,6 +1,6 @@
 import { isAPIError } from 'better-auth/api';
 
-import { sessionCacheKeysFor } from '../shared/session-cache';
+import { sessionCacheKey } from '../shared/session-cache';
 import type { AuthEnv, KVStore } from '../types';
 import { resolveKv } from './kv';
 import type { CreateAuthOptions } from './types';
@@ -30,7 +30,12 @@ interface InternalAdapter {
 
 interface HookContext {
   path: string;
-  body?: { token?: string; sessionToken?: string; userId?: string };
+  body?: {
+    token?: string;
+    sessionToken?: string;
+    userId?: string;
+    data?: { banned?: boolean };
+  };
   headers?: Headers;
   request?: Request;
   context: {
@@ -53,7 +58,21 @@ const CURRENT_USER_PATHS = new Set([
   '/delete-user/callback',
 ]);
 
-const BODY_USER_PATHS = new Set(['/admin/revoke-user-sessions', '/admin/remove-user']);
+// Admin routes that delete every session of the user named in the body:
+// bulk revocation, removal, and banning (`/admin/update-user` only when the
+// update sets `banned: true`).
+const BODY_USER_PATHS = new Set([
+  '/admin/revoke-user-sessions',
+  '/admin/remove-user',
+  '/admin/ban-user',
+  '/admin/update-user',
+]);
+
+function bodyTargetUserId(ctx: HookContext): string | undefined {
+  if (!BODY_USER_PATHS.has(ctx.path)) return;
+  if (ctx.path === '/admin/update-user' && ctx.body?.data?.banned !== true) return;
+  return ctx.body?.userId;
+}
 
 // Tokens collected by the before hook, keyed on the per-request endpoint
 // context Better Auth hands to both hooks of one dispatch.
@@ -102,16 +121,22 @@ async function resolveTargetUserId(
 ): Promise<string | undefined> {
   const isAdminRoute = BODY_USER_PATHS.has(ctx.path);
   if (!isAdminRoute && !CURRENT_USER_PATHS.has(ctx.path)) return;
+  const target = isAdminRoute ? bodyTargetUserId(ctx) : undefined;
+  if (isAdminRoute && !target) return;
   const token = await currentSessionToken(ctx, canUseBearer);
   if (!token) return;
   const caller = await ctx.context.internalAdapter.findSession(token);
   if (!caller) return;
-  return isAdminRoute ? ctx.body?.userId : caller.user.id;
+  return isAdminRoute ? target : caller.user.id;
 }
 
 async function resolveSingleToken(ctx: HookContext): Promise<string | undefined> {
-  // By `after`, the bearer plugin has already turned the header into the cookie.
-  if (ctx.path === '/sign-out') return currentSessionToken(ctx, false);
+  // By `after`, the bearer plugin has already turned the header into the
+  // cookie. `/admin/stop-impersonating` deletes the impersonation session,
+  // which is the one the request's cookie carries.
+  if (ctx.path === '/sign-out' || ctx.path === '/admin/stop-impersonating') {
+    return currentSessionToken(ctx, false);
+  }
   if (ctx.path === '/revoke-session') return ctx.body?.token;
   if (ctx.path === '/admin/revoke-user-session') return ctx.body?.sessionToken;
 }
@@ -140,17 +165,10 @@ async function collectSessionTokens(ctx: HookContext, canUseBearer: boolean): Pr
   );
 }
 
-// A session may be cached under its bearer form and its signed-cookie form;
-// both are cleared.
-async function invalidateTokens(kv: KVStore, tokens: string[], secret: string): Promise<void> {
+async function invalidateTokens(kv: KVStore, tokens: string[]): Promise<void> {
   await Promise.all(
     tokens.map(async (token) => {
-      const keys = await sessionCacheKeysFor(token, secret);
-      await Promise.all(
-        keys.map(async (key) => {
-          await kv.delete(key);
-        })
-      );
+      await kv.delete(sessionCacheKey(token));
     })
   );
 }
@@ -176,11 +194,11 @@ export function buildSessionInvalidationHook(
     pendingTokens.delete(ctx.context);
     if (isAPIError(ctx.context.returned)) return;
     if (collected) {
-      await invalidateTokens(kv, collected, ctx.context.secret);
+      await invalidateTokens(kv, collected);
       return;
     }
     const token = await resolveSingleToken(ctx);
     if (!token) return;
-    await invalidateTokens(kv, [token], ctx.context.secret);
+    await invalidateTokens(kv, [token]);
   };
 }

@@ -3,39 +3,26 @@ const CACHE_KEY_PREFIX = 'better-auth-workers:session:';
 // Cloudflare KV rejects expirationTtl values below 60 seconds.
 export const KV_MIN_TTL_SECONDS = 60;
 
-// The consumer-side cache is keyed by the credential exactly as a request
-// presents it: the signed cookie value (`<token>.<signature>`) or the bare
-// bearer token. A cookie with a forged signature therefore never maps to an
-// entry a genuine request warmed; it misses and is refused by the auth
-// Worker, which is the only place the signature is checked.
-export function sessionCacheKey(credential: string): string {
-  return `${CACHE_KEY_PREFIX}${credential}`;
+// The consumer-side cache is keyed by the bare session token, which is the
+// one thing every revocation point on the auth Worker has in hand (a
+// sign-out's cookie, a revoke body, a listed session). What makes the key
+// safe is the entry, not the key: it records the exact credentials the
+// auth Worker verified (the signed cookie value `<token>.<signature>`, or
+// the bearer token), and a request presenting anything else — a cookie
+// with a forged signature, say — is treated as a miss and sent to the auth
+// Worker, which is the only place a signature is checked. Nothing here has
+// to reproduce Better Auth's cookie signing.
+export function sessionCacheKey(token: string): string {
+  return `${CACHE_KEY_PREFIX}${token}`;
 }
 
-// Better Auth (through better-call) signs the session cookie as
-// `<token>.<base64(HMAC-SHA256(secret, token))>`. The auth Worker rebuilds
-// that value to find the cache entry a cookie-carrying request created.
-//
-// This mirrors better-call's `signCookieValue` (better-call 1.4.0, the
-// version better-auth 1.7.5 pins; package.json pins the same version as a
-// devDependency for the test below), which is not a documented format.
-// test/shared/session-cache.test.ts compares this against better-call's own
-// `serializeSignedCookie`, so a bump that changes the shape fails there
-// rather than silently leaving revoked sessions in the consumer cache.
-async function signedSessionValue(token: string, secret: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(token));
-  return `${token}.${btoa(String.fromCodePoint(...new Uint8Array(signature)))}`;
+// Better Auth signs cookies as `<token>.<signature>`; a bearer credential
+// may be either form. The bare token is the part before the first dot.
+export function sessionTokenOf(credential: string): string {
+  const [token] = credential.split('.', 1);
+  return token;
 }
 
-// Every cache key a session token can be cached under: the bearer form and
-// the signed-cookie form.
-export async function sessionCacheKeysFor(token: string, secret: string): Promise<string[]> {
-  return [sessionCacheKey(token), sessionCacheKey(await signedSessionValue(token, secret))];
-}
+// How many distinct credential forms one entry keeps (cookie and bearer of
+// the same session, at most); older ones fall off.
+export const MAX_CACHED_CREDENTIALS = 4;

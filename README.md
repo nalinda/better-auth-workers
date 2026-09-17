@@ -301,7 +301,7 @@ Some deployments should accept only some methods. An internal admin app might al
 allowedMethods: ['google'];
 ```
 
-installs a `before` hook that rejects requests to any other _configured_ sign-in method's routes with `403`. A deployment that has `phone` configured but not allowed keeps the phone routes mounted, so clients get a clear error rather than a `404`. A method that is not configured at all (no `phone`, `google` or `magicLink` option) has no plugin registered, so its routes are not mounted and still `404`.
+installs a `before` hook that rejects requests to any other _configured_ sign-in method's routes with `403`. A deployment that has `phone` configured but not allowed keeps the phone routes mounted, so clients get a clear error rather than a `404`. A method that is not configured at all (no `phone`, `google` or `magicLink` option) has no plugin registered, so its routes are not mounted and still `404`: a Google-only Worker that never configured `phone` answers `/phone-number/send-otp` with `404`, while one that configured `phone` but lists only `google` in `allowedMethods` answers it with `403`. `allowedMethods` restricts what is configured; it does not mount anything.
 
 ## Using sessions from another Worker
 
@@ -381,7 +381,7 @@ How it works:
 2. The result is cached in KV under the credential exactly as presented (the signed cookie value, or the bearer token) for the remaining session lifetime, so a cookie with a forged signature never hits an entry a genuine request warmed.
 3. Sign-out and session revocation in the auth Worker delete the KV entry, so the API sees the change on the next request.
 
-Step 3 covers every route that revokes sessions server-side: `/sign-out`, `/revoke-session`, `/revoke-sessions`, `/revoke-other-sessions`, `/delete-user` (and its callback), and the admin plugin's `/admin/revoke-user-session`, `/admin/revoke-user-sessions` and `/admin/remove-user`. Routes that revoke every session of a user list that user's sessions before the revocation and clear each cache entry after it. Sessions that expire on their own are not invalidated eagerly; their cache entries expire with them.
+Step 3 covers every route that revokes sessions server-side: `/sign-out`, `/revoke-session`, `/revoke-sessions`, `/revoke-other-sessions`, `/delete-user` (and its callback), and the admin plugin's `/admin/revoke-user-session`, `/admin/revoke-user-sessions`, `/admin/remove-user`, `/admin/ban-user`, `/admin/update-user` when it sets `banned: true`, and `/admin/stop-impersonating`. Routes that revoke every session of a user list that user's sessions before the revocation and clear each cache entry after it. Sessions that expire on their own are not invalidated eagerly; their cache entries expire with them.
 
 Sharing the KV namespace between the two Workers is what makes step 3 work. Using separate namespaces still functions, but revocation is only visible after the cache entry expires.
 

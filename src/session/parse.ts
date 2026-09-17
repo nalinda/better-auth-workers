@@ -1,5 +1,5 @@
 import type { JsonValue } from '../types';
-import type { SessionData, SessionRecord, SessionUser } from './types';
+import type { CachedSessionEntry, SessionData, SessionRecord, SessionUser } from './types';
 
 export function remainingTtlSeconds(expiresAt: string): number {
   const expiresMs = Date.parse(expiresAt);
@@ -38,4 +38,12 @@ export function toSessionData(value: JsonValue | undefined): SessionData | null 
   const user = toSessionUser(value.user);
   if (!session || !user) return null;
   return { session, user };
+}
+
+export function toCachedEntry(value: JsonValue | undefined): CachedSessionEntry | null {
+  if (!isObject(value) || !Array.isArray(value.credentials)) return null;
+  const credentials = value.credentials.filter((item): item is string => typeof item === 'string');
+  const session = toSessionData(value.session);
+  if (!session) return null;
+  return { credentials, session };
 }

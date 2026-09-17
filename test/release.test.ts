@@ -114,14 +114,23 @@ describe('Release workflow', () => {
     expect(draftStep?.['continue-on-error']).toBeUndefined();
   });
 
-  it('includes visible notice when NPM_TOKEN is not configured', () => {
+  // The two branches of the token gate must be complementary: exactly one
+  // of "annotate the run that publishing was skipped" and "publish" fires,
+  // decided by whether env.NPM_TOKEN is set, and the skip branch surfaces
+  // as a GitHub Actions annotation (`::notice`), not just a log line.
+  it('when NPM_TOKEN is empty, a step emits a notice annotation instead of publishing', () => {
     const workflow = readReleaseWorkflow();
     const steps = workflow?.jobs?.release?.steps ?? [];
-    const notifyStep = steps.find(
-      (s) => (s.if ?? '').includes('env.NPM_TOKEN') && /skipped|pending/i.test(s.run ?? '')
+    const skipStep = steps.find((s) => (s.if ?? '').includes("env.NPM_TOKEN == ''"));
+    expect(skipStep).toBeDefined();
+    const skipLines = (skipStep?.run ?? '').split('\n').map((line) => line.trim());
+    expect(skipLines.some((line) => line.startsWith('echo "::notice'))).toBe(true);
+    expect(skipLines.some((line) => line.startsWith('npm publish'))).toBe(false);
+
+    const publishStep = steps.find((s) =>
+      (s.run ?? '').split('\n').some((line) => line.trimStart().startsWith('npm publish'))
     );
-    expect(notifyStep).toBeDefined();
-    expect(notifyStep?.run).toMatch(/pending NPM_TOKEN|NPM_TOKEN/);
+    expect(publishStep?.if).toContain("env.NPM_TOKEN != ''");
   });
 
   // GitHub Actions does not expose `secrets` in a step-level `if:`; such a
@@ -194,10 +203,5 @@ describe('Release documentation', () => {
   it('documents changelog maintenance', () => {
     const readme = readReadme();
     expect(readme).toMatch(/CHANGELOG\.md/);
-  });
-
-  it('documents npm publish pending NPM_TOKEN setup', () => {
-    const readme = readReadme();
-    expect(readme).toMatch(/NPM_TOKEN/);
   });
 });

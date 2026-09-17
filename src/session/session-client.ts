@@ -3,25 +3,49 @@ import {
   sessionCredentialFromAuthorizationHeader,
   sessionCredentialFromCookie,
 } from '../shared/credentials';
-import { KV_MIN_TTL_SECONDS, sessionCacheKey } from '../shared/session-cache';
+import {
+  KV_MIN_TTL_SECONDS,
+  MAX_CACHED_CREDENTIALS,
+  sessionCacheKey,
+  sessionTokenOf,
+} from '../shared/session-cache';
 import type { JsonValue, KVStore } from '../types';
-import { remainingTtlSeconds, toSessionData } from './parse';
-import type { SessionClient, SessionClientOptions, SessionData } from './types';
+import { remainingTtlSeconds, toCachedEntry, toSessionData } from './parse';
+import type { CachedSessionEntry, SessionClient, SessionClientOptions, SessionData } from './types';
 
 const DEFAULT_BASE_PATH = '/api/auth';
 // Service bindings ignore the host; it only needs to be a valid absolute URL.
 const SERVICE_BINDING_ORIGIN = 'https://auth.internal';
 
-async function readCachedSession(kv: KVStore, key: string): Promise<SessionData | null> {
+async function readCachedEntry(kv: KVStore, key: string): Promise<CachedSessionEntry | null> {
   try {
     const cached = await kv.get(key);
     if (!cached) return null;
-    const parsed = toSessionData(JSON.parse(cached) as JsonValue);
-    if (!parsed || remainingTtlSeconds(parsed.session.expiresAt) <= 0) return null;
-    return parsed;
+    const entry = toCachedEntry(JSON.parse(cached) as JsonValue);
+    if (!entry || remainingTtlSeconds(entry.session.session.expiresAt) <= 0) return null;
+    return entry;
   } catch {
     return null;
   }
+}
+
+// Only a credential the auth Worker has verified before is served from the
+// entry; any other form of the same token (a forged signature) misses.
+function cachedSessionFor(
+  entry: CachedSessionEntry | null,
+  credential: string
+): SessionData | null {
+  if (!entry || !entry.credentials.includes(credential)) return null;
+  return entry.session;
+}
+
+function entryWith(
+  existing: CachedSessionEntry | null,
+  credential: string,
+  session: SessionData
+): CachedSessionEntry {
+  const others = (existing?.credentials ?? []).filter((known) => known !== credential);
+  return { credentials: [...others, credential].slice(-MAX_CACHED_CREDENTIALS), session };
 }
 
 async function fetchSession(
@@ -55,8 +79,9 @@ export function createSessionClient(options: SessionClientOptions): SessionClien
         sessionCredentialFromAuthorizationHeader(request);
       if (!credential) return null;
 
-      const cacheKey = sessionCacheKey(credential);
-      const cached = await readCachedSession(options.kv, cacheKey);
+      const cacheKey = sessionCacheKey(sessionTokenOf(credential));
+      const entry = await readCachedEntry(options.kv, cacheKey);
+      const cached = cachedSessionFor(entry, credential);
       if (cached) return cached;
 
       const session = await fetchSession(options, request);
@@ -66,7 +91,9 @@ export function createSessionClient(options: SessionClientOptions): SessionClien
       if (ttl <= 0) return null;
       if (ttl >= KV_MIN_TTL_SECONDS) {
         try {
-          await options.kv.put(cacheKey, JSON.stringify(session), { expirationTtl: ttl });
+          await options.kv.put(cacheKey, JSON.stringify(entryWith(entry, credential, session)), {
+            expirationTtl: ttl,
+          });
         } catch {
           // A cache write failure must not break session verification.
         }

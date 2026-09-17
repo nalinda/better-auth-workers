@@ -5,8 +5,8 @@ import {
   type SessionClient,
   type SessionClientOptions,
 } from '../../src/client';
-import { sessionCacheKeysFor } from '../../src/shared/session-cache';
-import { FakeKV, VALID_SECRET } from '../helpers/auth';
+import { sessionCacheKey } from '../../src/shared/session-cache';
+import { FakeKV } from '../helpers/auth';
 
 // The real exported types, so a breaking change to createSessionClient's
 // signature turns this file red at compile time.
@@ -255,16 +255,12 @@ describe('createSessionClient verifies sessions over a service binding with a KV
   });
 
   describe('bearer credential forms', () => {
-    // Better Auth signs the token with the auth Worker's secret; a client
-    // may echo the cookie value into the Authorization header verbatim,
-    // URL-encoded (the base64 signature ends in `=`). Whatever form it
-    // sends, the entry must sit under a key the auth Worker's revocation
-    // clears — the bare form or the decoded signed form.
-    it('caches an encoded signed bearer token under the key revocation clears', async () => {
-      const revocationKeys = await sessionCacheKeysFor(TOKEN, VALID_SECRET);
-      const signedKey = revocationKeys[1];
-      const signedValue = signedKey.slice(signedKey.lastIndexOf(`${TOKEN}.`));
-      expect(signedValue.endsWith('=')).toBe(true);
+    // A client may echo the cookie value into the Authorization header
+    // verbatim, URL-encoded (the base64 signature ends in `=`). Whatever
+    // form it sends, the entry sits under the bare token — the one key the
+    // auth Worker's revocation clears — with the decoded credential stored.
+    it('caches an encoded signed bearer token under the bare-token key revocation clears', async () => {
+      const signedValue = `${TOKEN}.c2lnbmF0dXJl=`;
       const encodedHeader = `Bearer ${encodeURIComponent(signedValue)}`;
       const payload = sessionPayload(new Date(Date.now() + 3_600_000));
       const answer = (input: RequestInfo | URL) =>
@@ -279,21 +275,41 @@ describe('createSessionClient verifies sessions over a service binding with a KV
 
       const result = await client.get(request());
       expect(result?.session.token).toBe(TOKEN);
-      expect(kv.store.keys().toArray()).toEqual([signedKey]);
+      expect(kv.store.keys().toArray()).toEqual([sessionCacheKey(TOKEN)]);
+      const entry = JSON.parse(kv.store.get(sessionCacheKey(TOKEN)) ?? '{}') as {
+        credentials: string[];
+      };
+      expect(entry.credentials).toEqual([signedValue]);
 
-      // The auth Worker revokes the session: it deletes every key form.
-      for (const key of revocationKeys) await kv.delete(key);
+      // Served from the entry on the next request.
+      await client.get(request());
+      expect(binding.fetch).toHaveBeenCalledTimes(1);
 
-      // Nothing is left to serve from cache: the next request goes back to
-      // the auth Worker instead of a stale entry.
-      expect(kv.store.size).toBe(0);
+      // The auth Worker revokes the session by deleting the bare-token key.
+      await kv.delete(sessionCacheKey(TOKEN));
+
       await client.get(request());
       expect(binding.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps the cookie and bearer forms of one session in a single entry', async () => {
+      const { binding, fetch } = fakeAuthBinding(new Date(Date.now() + 3_600_000));
+      const kv = new FakeKV();
+      const client = buildSessionClient({ auth: binding, kv, basePath: BASE_PATH });
+
+      await client.get(makeSessionRequest());
+      await client.get(makeBearerRequest());
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(kv.store.size).toBe(1);
+
+      await client.get(makeSessionRequest());
+      await client.get(makeBearerRequest());
+      expect(fetch).toHaveBeenCalledTimes(2);
     });
   });
 
   describe('cookie signatures', () => {
-    it('does not serve a cookie with a forged signature from an entry a genuine request warmed', async () => {
+    it('does not serve a cookie with a forged signature from the entry a genuine request warmed', async () => {
       const { binding, fetch } = fakeAuthBinding(new Date(Date.now() + 3_600_000));
       const kv = new FakeKV();
       const client = buildSessionClient({ auth: binding, kv, basePath: BASE_PATH });

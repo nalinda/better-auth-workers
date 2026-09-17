@@ -2,7 +2,7 @@ import { APIError } from 'better-auth';
 import { describe, expect, it } from 'bun:test';
 
 import { type AuthInstance, createAuth } from '../../../src/index';
-import { sessionCacheKey, sessionCacheKeysFor } from '../../../src/shared/session-cache';
+import { sessionCacheKey } from '../../../src/shared/session-cache';
 import { buildEnv, FakeKV, VALID_SECRET } from '../../helpers/auth';
 
 // Better Auth invokes `options.hooks.before` / `options.hooks.after` with the
@@ -17,7 +17,12 @@ interface SessionRecord {
 
 interface FakeEndpointContext {
   path: string;
-  body?: { token?: string; sessionToken?: string; userId?: string };
+  body?: {
+    token?: string;
+    sessionToken?: string;
+    userId?: string;
+    data?: { banned?: boolean; name?: string };
+  };
   headers?: Headers;
   context: {
     secret: string;
@@ -103,18 +108,17 @@ async function dispatch(
   await auth.options.hooks?.after?.(ctx as never);
 }
 
-// A session can be cached under its bearer form and its signed-cookie form
-// (see src/shared/session-cache.ts); the seed and the expectations cover both.
-async function cacheKeysFor(tokens: string[]): Promise<string[]> {
-  const keys = await Promise.all(tokens.map((token) => sessionCacheKeysFor(token, VALID_SECRET)));
-  return keys.flat();
+// The consumer cache is keyed by the bare session token (see
+// src/shared/session-cache.ts), whichever credential form warmed it.
+function cacheKeysFor(tokens: string[]): Promise<string[]> {
+  return Promise.resolve(tokens.map((token) => sessionCacheKey(token)));
 }
 
 async function seededKv(tokens: string[]): Promise<FakeKV> {
   const kv = new FakeKV();
   const keys = await cacheKeysFor(tokens);
   for (const key of keys) {
-    kv.store.set(key, JSON.stringify({ session: { token: key } }));
+    kv.store.set(key, JSON.stringify({ credentials: [], session: { token: key } }));
   }
   return kv;
 }
@@ -316,7 +320,7 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
   });
 
   describe('admin routes revoking every session of a user named in the body', () => {
-    it.each(['/admin/revoke-user-sessions', '/admin/remove-user'])(
+    it.each(['/admin/revoke-user-sessions', '/admin/remove-user', '/admin/ban-user'])(
       '%s clears every cached session of body.userId, after the revocation',
       async (path) => {
         const kv = await seededKv(USER_TOKENS);
@@ -338,7 +342,49 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
       }
     );
 
-    it.each(['/admin/revoke-user-sessions', '/admin/remove-user'])(
+    it('/admin/update-user with banned: true clears every cached session of body.userId', async () => {
+      const kv = await seededKv(USER_TOKENS);
+      const store = fakeStore();
+      const auth = authWith(kv);
+      const ctx = endpointContext(store, '/admin/update-user', {
+        cookieToken: ADMIN_TOKEN,
+        body: { userId: USER_ID, data: { banned: true } },
+      });
+
+      await dispatch(auth, ctx, () => store.sessions.clear());
+
+      expect(new Set(kv.deletes)).toEqual(new Set(await cacheKeysFor(USER_TOKENS)));
+    });
+
+    it('/admin/update-user without a ban neither lists nor clears anything', async () => {
+      const kv = await seededKv(USER_TOKENS);
+      const store = fakeStore();
+      const auth = authWith(kv);
+      const ctx = endpointContext(store, '/admin/update-user', {
+        cookieToken: ADMIN_TOKEN,
+        body: { userId: USER_ID, data: { name: 'Renamed' } },
+      });
+
+      await dispatch(auth, ctx, () => {});
+
+      expect(store.listCalls).toHaveLength(0);
+      expect(kv.deletes).toHaveLength(0);
+    });
+
+    it('/admin/stop-impersonating clears the impersonation session the request carries', async () => {
+      const kv = await seededKv([TOKEN]);
+      const auth = authWith(kv);
+
+      await dispatch(
+        auth,
+        endpointContext(fakeStore(), '/admin/stop-impersonating', { cookieToken: TOKEN }),
+        () => ({ success: true })
+      );
+
+      expect(new Set(kv.deletes)).toEqual(new Set(await cacheKeysFor([TOKEN])));
+    });
+
+    it.each(['/admin/revoke-user-sessions', '/admin/remove-user', '/admin/ban-user'])(
       '%s does not look up or clear anything for an unauthenticated caller',
       async (path) => {
         const kv = await seededKv(USER_TOKENS);
