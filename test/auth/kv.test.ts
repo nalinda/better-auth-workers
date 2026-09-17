@@ -110,23 +110,23 @@ describe('KV secondary storage for session cache and rate limiter', () => {
       const mockKv = new FakeKV();
       const auth = createAuthInstance(validEnv, { kv: mockKv });
 
-      expect(auth?.options?.secondaryStorage).toBeDefined();
+      expect(auth.options.secondaryStorage).toBeDefined();
 
       // Test set with TTL
-      await auth?.options?.secondaryStorage?.set('test-key', 'test-value', 300);
-      expect(mockKv.puts.length).toBe(1);
+      await auth.options.secondaryStorage?.set('test-key', 'test-value', 300);
+      expect(mockKv.puts).toHaveLength(1);
       expect(mockKv.puts[0]?.key).toBe('test-key');
       expect(mockKv.puts[0]?.value).toBe('test-value');
       expect(mockKv.puts[0]?.options?.expirationTtl).toBe(300);
 
       // Test get
-      const value = await auth?.options?.secondaryStorage?.get('test-key');
+      const value = await auth.options.secondaryStorage?.get('test-key');
       expect(value).toBe('test-value');
 
       // Test delete
-      await auth?.options?.secondaryStorage?.delete('test-key');
+      await auth.options.secondaryStorage?.delete('test-key');
       expect(mockKv.deletes).toContain('test-key');
-      const deletedValue = await auth?.options?.secondaryStorage?.get('test-key');
+      const deletedValue = await auth.options.secondaryStorage?.get('test-key');
       expect(deletedValue).toBeNull();
     });
 
@@ -134,25 +134,25 @@ describe('KV secondary storage for session cache and rate limiter', () => {
       const mockKv = new FakeKV();
       const envWithKv = { ...validEnv, AUTH_KV: mockKv };
       const auth = createAuthInstance(envWithKv);
-      expect(auth?.options?.secondaryStorage).toBeDefined();
+      expect(auth.options.secondaryStorage).toBeDefined();
     });
 
     it('supports options first argument order: createAuth({ kv }, env)', () => {
       const mockKv = new FakeKV();
       const auth = callCreateAuth({ kv: mockKv }, validEnv);
-      expect(auth?.options?.secondaryStorage).toBeDefined();
+      expect(auth.options.secondaryStorage).toBeDefined();
     });
 
     it('implements increment on secondaryStorage for distributed rate limiting', async () => {
       const mockKv = new FakeKV();
       const auth = createAuthInstance(validEnv, { kv: mockKv });
 
-      expect(typeof auth?.options?.secondaryStorage?.increment).toBe('function');
+      expect(typeof auth.options.secondaryStorage?.increment).toBe('function');
 
-      const count1 = await auth?.options?.secondaryStorage?.increment?.('test-limit-key', 60);
+      const count1 = await auth.options.secondaryStorage?.increment?.('test-limit-key', 60);
       expect(count1).toBe(1);
 
-      const count2 = await auth?.options?.secondaryStorage?.increment?.('test-limit-key', 60);
+      const count2 = await auth.options.secondaryStorage?.increment?.('test-limit-key', 60);
       expect(count2).toBe(2);
     });
   });
@@ -161,7 +161,7 @@ describe('KV secondary storage for session cache and rate limiter', () => {
     it('enables cookie caching by default in Better Auth session options', () => {
       const mockKv = new FakeKV();
       const auth = createAuthInstance(validEnv, { kv: mockKv });
-      expect(auth?.options?.session?.cookieCache?.enabled).toBe(true);
+      expect(auth.options.session?.cookieCache?.enabled).toBe(true);
     });
 
     it('allows cookie caching to be explicitly disabled or customized in options', () => {
@@ -170,7 +170,7 @@ describe('KV secondary storage for session cache and rate limiter', () => {
         kv: mockKv,
         betterAuth: { session: { cookieCache: { enabled: false } } },
       });
-      expect(auth?.options?.session?.cookieCache?.enabled).toBe(false);
+      expect(auth.options.session?.cookieCache?.enabled).toBe(false);
     });
   });
 
@@ -178,7 +178,7 @@ describe('KV secondary storage for session cache and rate limiter', () => {
     it('configures the rate limiter to use secondary storage when KV is provided', () => {
       const mockKv = new FakeKV();
       const auth = createAuthInstance(validEnv, { kv: mockKv });
-      expect(auth?.options?.rateLimit?.storage).toBe('secondary-storage');
+      expect(auth.options.rateLimit?.storage).toBe('secondary-storage');
     });
   });
 });

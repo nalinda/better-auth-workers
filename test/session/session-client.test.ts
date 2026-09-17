@@ -49,6 +49,10 @@ const SIGNED_TOKEN = `${TOKEN}.c2lnbmF0dXJl`;
 const VALID_COOKIE = `better-auth.session_token=${encodeURIComponent(SIGNED_TOKEN)}`;
 const INVALID_COOKIE = 'better-auth.session_token=nope.invalid';
 
+function makeSessionRequest(): Request {
+  return new Request('https://api.example.com/me', { headers: { cookie: VALID_COOKIE } });
+}
+
 function sessionPayload(expiresAt: Date) {
   return {
     session: {
@@ -127,7 +131,7 @@ describe('createSessionClient verifies sessions over a service binding with a KV
         })
       );
 
-      expect(result?.user?.email).toBe('alice@example.com');
+      expect(result?.user.email).toBe('alice@example.com');
     });
   });
 
@@ -136,11 +140,8 @@ describe('createSessionClient verifies sessions over a service binding with a KV
       const { binding, fetch } = fakeAuthBinding(new Date(Date.now() + 3_600_000));
       const kv = new FakeKV();
       const client = buildSessionClient({ auth: binding, kv, basePath: BASE_PATH });
-      const makeRequest = () =>
-        new Request('https://api.example.com/me', { headers: { cookie: VALID_COOKIE } });
-
-      const first = await client.get(makeRequest());
-      const second = await client.get(makeRequest());
+      const first = await client.get(makeSessionRequest());
+      const second = await client.get(makeSessionRequest());
 
       expect(fetch).toHaveBeenCalledTimes(1);
       expect(second).not.toBeNull();
@@ -159,7 +160,7 @@ describe('createSessionClient verifies sessions over a service binding with a KV
         new Request('https://api.example.com/me', { headers: { cookie: VALID_COOKIE } })
       );
 
-      expect(kv.puts.length).toBe(1);
+      expect(kv.puts).toHaveLength(1);
       const put = kv.puts[0];
       expect(put.key).toContain(TOKEN);
       const ttl = put.options?.expirationTtl;
@@ -173,21 +174,18 @@ describe('createSessionClient verifies sessions over a service binding with a KV
       const kv = new FakeKV();
       const primary = fakeAuthBinding(expiresAt);
       const consumer = fakeAuthBinding(expiresAt);
-      const makeRequest = () =>
-        new Request('https://api.example.com/me', { headers: { cookie: VALID_COOKIE } });
-
       await buildSessionClient({ auth: primary.binding, kv, basePath: BASE_PATH }).get(
-        makeRequest()
+        makeSessionRequest()
       );
       const result = await buildSessionClient({
         auth: consumer.binding,
         kv,
         basePath: BASE_PATH,
-      }).get(makeRequest());
+      }).get(makeSessionRequest());
 
       expect(primary.fetch).toHaveBeenCalledTimes(1);
       expect(consumer.fetch).toHaveBeenCalledTimes(0);
-      expect(result?.session?.token).toBe(TOKEN);
+      expect(result?.session.token).toBe(TOKEN);
     });
   });
 

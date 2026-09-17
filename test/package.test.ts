@@ -19,29 +19,42 @@ interface TsConfig {
   };
 }
 
+// Every path below is built from import.meta.dir plus a fixed relative
+// string, never from external input, so the non-literal-argument warning
+// these fs calls trigger does not apply.
+
 function readPackageJson(): PackageJson | undefined {
   const pkgPath = path.resolve(import.meta.dir, '../package.json');
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path, see file header
   if (!fs.existsSync(pkgPath)) return undefined;
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path, see file header
   return JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as PackageJson;
 }
 
 function readTsConfig(): TsConfig | undefined {
   const tsconfigPath = path.resolve(import.meta.dir, '../tsconfig.json');
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path, see file header
   if (!fs.existsSync(tsconfigPath)) return undefined;
-  const content = fs
-    .readFileSync(tsconfigPath, 'utf8')
-    .replaceAll(/\/\/[^\n]*/g, '')
-    .replaceAll(/\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\//g, '');
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path, see file header
+  const raw = fs.readFileSync(tsconfigPath, 'utf8');
+  const content = raw.replaceAll(/\/\/[^\n]*/g, '').replaceAll(/\/\*.*?\*\//gs, '');
   return JSON.parse(content) as TsConfig;
 }
 
 function readWorkflows(): string {
   const workflowsDir = path.resolve(import.meta.dir, '../.github/workflows');
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path, see file header
   if (!fs.existsSync(workflowsDir)) return '';
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path, see file header
   const files = fs
     .readdirSync(workflowsDir)
     .filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'));
-  return files.map((f) => fs.readFileSync(path.join(workflowsDir, f), 'utf8')).join('\n');
+  return files
+    .map((f) =>
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path, see file header
+      fs.readFileSync(path.join(workflowsDir, f), 'utf8')
+    )
+    .join('\n');
 }
 
 describe('Package scaffolding and metadata', () => {
@@ -93,6 +106,7 @@ describe('Package scaffolding and metadata', () => {
   for (const script of ['test', 'ts-check', 'lint', 'build']) {
     it(`package.json defines ${script} script`, () => {
       const pkg = readPackageJson();
+      // eslint-disable-next-line security/detect-object-injection -- script is one of the fixed literals above, not external input
       expect(pkg?.scripts?.[script]).toBeDefined();
     });
   }

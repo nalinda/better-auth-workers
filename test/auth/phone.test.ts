@@ -111,11 +111,12 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
       let isHandlerCompleted = false;
       let response: Response | undefined;
 
-      const handlerPromise = auth.handler(req, ctx).then((res: Response) => {
+      const handlerPromise = (async () => {
+        const res = await auth.handler(req, ctx);
         isHandlerCompleted = true;
         response = res;
         return res;
-      });
+      })();
 
       try {
         await new Promise((resolve) => setTimeout(resolve, 30));
@@ -138,7 +139,7 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
   describe('Delivery failure handling', () => {
     it('returns a successful response when sendOTP throws and logs the error to worker logs', async () => {
       const deliveryError = new Error('SMS provider gateway timeout');
-      const sendOTP = mock(async () => {
+      const sendOTP = mock(() => {
         throw deliveryError;
       });
 
@@ -168,7 +169,11 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
         const responseText = await res.text();
         expect(responseText).not.toContain('SMS provider gateway timeout');
 
-        await Promise.all(promises).catch(() => {});
+        try {
+          await Promise.all(promises);
+        } catch {
+          // delivery rejections are asserted on separately via captured logs
+        }
 
         const loggedContent = capturedLogs.join('\n');
         expect(loggedContent).toContain('SMS provider gateway timeout');
@@ -181,7 +186,7 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
   describe('Log hygiene', () => {
     it('never includes the OTP code string in any captured worker log calls', async () => {
       let sentCode = '';
-      const sendOTP = mock(async ({ code }: { phoneNumber: string; code: string }) => {
+      const sendOTP = mock(({ code }: { phoneNumber: string; code: string }) => {
         sentCode = code;
       });
 
@@ -217,7 +222,11 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
         expect(res.status).toBe(200);
         expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
 
-        await Promise.all(promises).catch(() => {});
+        try {
+          await Promise.all(promises);
+        } catch {
+          // delivery rejections are asserted on separately via captured logs
+        }
 
         expect(sentCode).toBeDefined();
         expect(sentCode.length).toBeGreaterThanOrEqual(4);
@@ -235,7 +244,7 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
 
   describe('E.164 phone number validation', () => {
     it('rejects an invalid phone number before sendOTP is invoked', async () => {
-      const sendOTP = mock(async () => {});
+      const sendOTP = mock(() => {});
       const { ctx } = createMockExecutionContext();
       const auth = createAuthInstance(validEnv, {
         ctx,
@@ -273,7 +282,7 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
         },
       });
 
-      const phonePlugin = auth?.options?.plugins?.find((p) => p.id === 'phone-number');
+      const phonePlugin = auth.options?.plugins?.find((p) => p.id === 'phone-number');
       expect(phonePlugin?.options?.otpLength).toBe(6);
       expect(phonePlugin?.options?.expiresIn).toBe(300);
       expect(phonePlugin?.options?.allowedAttempts).toBe(3);
@@ -287,7 +296,7 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
         },
       });
 
-      const customPlugin = customAuth?.options?.plugins?.find((p) => p.id === 'phone-number');
+      const customPlugin = customAuth.options?.plugins?.find((p) => p.id === 'phone-number');
       expect(customPlugin?.options?.otpLength).toBe(8);
       expect(customPlugin?.options?.expiresIn).toBe(600);
       expect(customPlugin?.options?.allowedAttempts).toBe(5);

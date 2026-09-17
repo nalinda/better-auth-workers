@@ -18,7 +18,7 @@ class MockPool {
   }
 }
 
-mock.module('pg', () => ({
+void mock.module('pg', () => ({
   Pool: MockPool,
   default: { Pool: MockPool },
 }));
@@ -71,8 +71,8 @@ describe('D1 as the primary store', () => {
         env
       );
 
-      expect(auth?.options?.database).toBe(mockD1);
-      expect(capturedPools.length).toBe(0);
+      expect(auth.options.database).toBe(mockD1);
+      expect(capturedPools).toHaveLength(0);
     });
 
     it('passes the D1 binding straight through when called as createAuth(env, { database: { d1 } })', () => {
@@ -82,8 +82,8 @@ describe('D1 as the primary store', () => {
         database: { d1: mockD1 },
       });
 
-      expect(auth?.options?.database).toBe(mockD1);
-      expect(capturedPools.length).toBe(0);
+      expect(auth.options.database).toBe(mockD1);
+      expect(capturedPools).toHaveLength(0);
     });
 
     it('uses env.DB straight through as Better Auth database config when options.database is omitted', () => {
@@ -95,8 +95,8 @@ describe('D1 as the primary store', () => {
 
       const auth = callCreateAuth(envWithD1);
 
-      expect(auth?.options?.database).toBe(mockD1);
-      expect(capturedPools.length).toBe(0);
+      expect(auth.options.database).toBe(mockD1);
+      expect(capturedPools).toHaveLength(0);
     });
 
     it('throws a clear error when neither hyperdrive nor d1 is configured on options or env', () => {

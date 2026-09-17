@@ -20,7 +20,7 @@ async function loadEntryPoint(subpath = '.'): Promise<Record<string, unknown>> {
 
   for (const candidate of candidates) {
     try {
-      return await import(candidate);
+      return (await import(candidate)) as Record<string, unknown>;
     } catch {
       // ignore resolution/loading errors
     }

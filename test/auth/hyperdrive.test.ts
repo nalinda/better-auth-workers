@@ -34,7 +34,7 @@ class MockPool {
   }
 }
 
-mock.module('pg', () => ({
+void mock.module('pg', () => ({
   Pool: MockPool,
   default: { Pool: MockPool },
 }));
@@ -100,7 +100,7 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
         database: { hyperdrive: env.HYPERDRIVE },
       });
 
-      expect(capturedPools.length).toBe(1);
+      expect(capturedPools).toHaveLength(1);
       const pool = capturedPools[0];
       expect(pool.options.connectionString).toBe(connectionString);
       expect(typeof pool.options.max).toBe('number');
@@ -119,8 +119,8 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
         database: { hyperdrive: env.HYPERDRIVE },
       });
 
-      expect(capturedPools.length).toBe(1);
-      expect(auth?.options?.database).toBe(capturedPools[0]);
+      expect(capturedPools).toHaveLength(1);
+      expect(auth.options.database).toBe(capturedPools[0]);
     });
 
     it('creates a pg Pool automatically when env.HYPERDRIVE is present and database option is omitted', () => {
@@ -132,9 +132,9 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
 
       const auth = createAuthInstance(env);
 
-      expect(capturedPools.length).toBe(1);
+      expect(capturedPools).toHaveLength(1);
       expect(capturedPools[0].options.connectionString).toBe(connectionString);
-      expect(auth?.options?.database).toBe(capturedPools[0]);
+      expect(auth.options.database).toBe(capturedPools[0]);
     });
 
     it('supports database: { hyperdrive } in options when passed explicitly', () => {
@@ -146,7 +146,7 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
         database: { hyperdrive: customHyperdrive },
       });
 
-      expect(capturedPools.length).toBe(1);
+      expect(capturedPools).toHaveLength(1);
       expect(capturedPools[0].options.connectionString).toBe(customConnectionString);
     });
   });
@@ -299,7 +299,7 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
         // the mocked handler may reject; only the pool lifecycle is under test
       }
 
-      expect(capturedPools.length).toBe(2);
+      expect(capturedPools).toHaveLength(2);
       expect(capturedPools[0]).not.toBe(capturedPools[1]);
       expect(capturedPools[0]?.ended).toBe(true);
       expect(capturedPools[1]?.ended).toBe(true);
@@ -332,9 +332,9 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
         }
       }
 
-      expect(capturedPools.length).toBe(requestCount);
+      expect(capturedPools).toHaveLength(requestCount);
       const activePools = capturedPools.filter((p) => !p.ended || p.endCalls !== 1);
-      expect(activePools.length).toBe(0);
+      expect(activePools).toHaveLength(0);
     });
   });
 });
