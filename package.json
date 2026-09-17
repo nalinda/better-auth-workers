@@ -21,7 +21,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "migrations"
   ],
   "scripts": {
     "build": "bun build src/index.ts src/client.ts --outdir dist --packages external && tsc -p tsconfig.build.json",
