@@ -46,6 +46,22 @@ describe('Issue #2: createAuth: per-request Better Auth instance memoised on env
       expect(typeof auth?.handler).toBe('function');
       expect(auth?.options).toBeDefined();
     });
+
+    it('builds a Better Auth instance using bindings on env', () => {
+      const mockKv = { get: () => {}, put: () => {}, delete: () => {} };
+      const mockD1 = { prepare: () => {} };
+      const envWithBindings = {
+        ...validEnv,
+        AUTH_KV: mockKv,
+        DB: mockD1,
+      };
+      const auth = createAuthInstance(envWithBindings, {
+        kv: envWithBindings.AUTH_KV as any,
+        database: { d1: envWithBindings.DB as any },
+      });
+      expect(auth?.options?.database).toBeDefined();
+      expect(auth?.options?.secondaryStorage).toBeDefined();
+    });
   });
 
   describe('Memoisation', () => {
@@ -137,11 +153,33 @@ describe('Issue #2: createAuth: per-request Better Auth instance memoised on env
       });
       expect(auth?.options?.basePath).toBe('/overridden-by-better-auth');
     });
+
+    it('allows options.betterAuth to override baseURL and secret resolved from options and env', () => {
+      const auth = createAuthInstance(validEnv, {
+        baseURL: 'https://options.example.com',
+        secret: 'options-secret-at-least-32-chars-long-12345',
+        betterAuth: {
+          baseURL: 'https://override.example.com',
+          secret: 'override-secret-at-least-32-chars-long-99999',
+        },
+      });
+      expect(auth?.options?.baseURL).toBe('https://override.example.com');
+      expect(auth?.options?.secret).toBe('override-secret-at-least-32-chars-long-99999');
+    });
   });
 
   describe('Plugin configuration', () => {
     it('enables the admin plugin by default without phone or bearer plugins', () => {
       const auth = createAuthInstance(validEnv, {});
+      const pluginIds = auth?.options?.plugins?.map((p: any) => p.id) ?? [];
+      expect(pluginIds).toEqual(['admin']);
+    });
+
+    it('does not enable bearer or phone plugins when bearer is false and phone is undefined', () => {
+      const auth = createAuthInstance(validEnv, {
+        bearer: false,
+        phone: undefined,
+      });
       const pluginIds = auth?.options?.plugins?.map((p: any) => p.id) ?? [];
       expect(pluginIds).toEqual(['admin']);
     });
@@ -196,17 +234,24 @@ describe('Issue #2: createAuth: per-request Better Auth instance memoised on env
       expect(response.status).toBe(200);
     });
 
-    it('serves Better Auth routes from a Worker request handler', async () => {
-      const worker = {
-        async fetch(request: Request, env: Record<string, unknown>) {
+    it('serves Better Auth routes from a Hono Worker request handler', async () => {
+      let workerFetch: (request: Request, env: Record<string, unknown>) => Promise<Response>;
+      try {
+        const honoModule = 'hono';
+        const { Hono } = (await import(honoModule)) as any;
+        const app = new Hono();
+        app.on(['GET', 'POST'], '/auth/*', (c: any) => {
+          const auth = createAuthInstance(c.env, { basePath: '/auth' });
+          return auth.handler(c.req.raw);
+        });
+        workerFetch = (req: Request, env: Record<string, unknown>) => app.fetch(req, env);
+      } catch {
+        workerFetch = async (request: Request, env: Record<string, unknown>) => {
           const auth = createAuthInstance(env, { basePath: '/auth' });
           return auth.handler(request);
-        },
-      };
-      const response = await worker.fetch(
-        new Request('https://auth.example.com/auth/ok'),
-        validEnv
-      );
+        };
+      }
+      const response = await workerFetch(new Request('https://auth.example.com/auth/ok'), validEnv);
       expect(response.status).toBe(200);
     });
   });
