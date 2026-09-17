@@ -257,6 +257,24 @@ describe('Plugin configuration', () => {
     expect(pluginIds(auth)).toEqual(['admin', 'phone-number', 'bearer']);
   });
 
+  it('appends betterAuth.plugins after the built-in plugins instead of replacing them', () => {
+    const auth = createAuth(validEnv, {
+      phone: { sendOTP: async () => {} },
+      bearer: true,
+      allowedMethods: ['phone'],
+      plugins: [{ id: 'first-party' }],
+      betterAuth: { plugins: [{ id: 'escape-hatch-plugin' }] },
+    });
+    expect(pluginIds(auth)).toEqual([
+      'admin',
+      'phone-number',
+      'better-auth-workers-disallowed-methods',
+      'bearer',
+      'first-party',
+      'escape-hatch-plugin',
+    ]);
+  });
+
   it('appends options.plugins after the built-in plugins', () => {
     const auth = createAuth(validEnv, {
       phone: { sendOTP: async () => {} },

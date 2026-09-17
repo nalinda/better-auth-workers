@@ -278,7 +278,8 @@ describe('Hono auth Worker implementation', () => {
     );
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    const body: { ok?: boolean } = await res.json();
+    expect(body).toEqual({ ok: true });
   });
 
   it('delivers a phone OTP by logging it, marked for local use only, under the request’s waitUntil', async () => {
@@ -409,8 +410,9 @@ describe('Second Worker with service binding and session validation', () => {
     const res = await app.fetch(req, stubEnv, stubCtx().ctx);
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual(mockSession.user);
+    const user: typeof mockSession.user = await res.json();
+    expect(user).toEqual(mockSession.user);
     // The client fetches get-session under the auth Worker's basePath.
-    expect(authCalls).toEqual(['https://auth.internal/auth/get-session']);
+    expect(authCalls).toEqual(['https://auth.internal/auth/get-session?disableCookieCache=true']);
   });
 });

@@ -1,5 +1,6 @@
 import {
   DEFAULT_COOKIE_NAME,
+  sessionCookiePairFrom,
   sessionCredentialFromAuthorizationHeader,
   sessionCredentialFromCookie,
 } from '../shared/credentials';
@@ -48,17 +49,24 @@ function entryWith(
   return { credentials: [...others, credential].slice(-MAX_CACHED_CREDENTIALS), session };
 }
 
+// A cache miss is answered by the auth Worker's store, never by Better
+// Auth's own cookie cache: only the session-token cookie is forwarded (not
+// `session_data`), and `disableCookieCache` is set for good measure. The
+// consumer's KV cache already provides the fast path, and Better Auth's
+// cookie cache would keep answering for a session the auth Worker has just
+// revoked — an answer that would then be cached here for days.
 async function fetchSession(
   options: SessionClientOptions,
-  request: Request
+  request: Request,
+  cookieName: string
 ): Promise<SessionData | null> {
   const basePath = options.basePath ?? DEFAULT_BASE_PATH;
-  const url = `${SERVICE_BINDING_ORIGIN}${basePath.replace(/\/$/, '')}/get-session`;
+  const url = `${SERVICE_BINDING_ORIGIN}${basePath.replace(/\/$/, '')}/get-session?disableCookieCache=true`;
   const headers = new Headers({ accept: 'application/json' });
   const authorization = request.headers.get('authorization');
-  const cookie = request.headers.get('cookie');
+  const sessionCookie = sessionCookiePairFrom(request, cookieName);
   if (authorization) headers.set('authorization', authorization);
-  if (cookie) headers.set('cookie', cookie);
+  if (sessionCookie) headers.set('cookie', sessionCookie);
 
   try {
     const response = await options.auth.fetch(new Request(url, { headers }));
@@ -85,7 +93,7 @@ export function createSessionClient(options: SessionClientOptions): SessionClien
       const cached = cachedSessionFor(entry, credential);
       if (cached) return cached;
 
-      const session = await fetchSession(options, request);
+      const session = await fetchSession(options, request, cookieName);
       if (!session) return null;
 
       const ttl = remainingTtlSeconds(session.session.expiresAt);

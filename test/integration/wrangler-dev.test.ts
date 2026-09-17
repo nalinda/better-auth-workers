@@ -282,6 +282,32 @@ describe.each(requestedBackends())('example Worker under wrangler dev (%s)', (ba
     expect(afterSignOut.status).toBe(401);
   });
 
+  it('a revocation from elsewhere is seen even when the client still holds the cookie-cache cookie', async () => {
+    // The browser keeps its full jar (session token + Better Auth's signed
+    // session_data cookie). The session is revoked from another device;
+    // the API Worker must not be talked into re-caching it by that cookie.
+    const phoneNumber = nextPhone();
+    const verified = await signInWithPhone(server, phoneNumber);
+    const fullJar = allCookiesFrom(verified);
+    expect(fullJar).toMatch(/session_data=/);
+    const token = verified.headers.get('set-auth-token');
+    expect(token).toBeTruthy();
+
+    const warm = await fetch(`${server.baseUrl}/me`, { headers: { cookie: fullJar } });
+    expect(warm.status).toBe(200);
+
+    const revoked = await postJson(
+      server,
+      '/auth/revoke-sessions',
+      {},
+      { authorization: `Bearer ${token as string}` }
+    );
+    expect(revoked.status).toBe(200);
+
+    const afterRevoke = await fetch(`${server.baseUrl}/me`, { headers: { cookie: fullJar } });
+    expect(afterRevoke.status).toBe(401);
+  });
+
   it('a bearer-authenticated revoke-sessions invalidates the session client cache too', async () => {
     const phoneNumber = nextPhone();
     const verified = await signInWithPhone(server, phoneNumber);

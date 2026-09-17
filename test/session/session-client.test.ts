@@ -82,20 +82,25 @@ function fakeAuthBinding(expiresAt: Date) {
 
 describe('createSessionClient verifies sessions over a service binding with a KV cache', () => {
   describe('get(request) with a valid session cookie', () => {
-    it('forwards the Cookie header to the auth Worker get-session route over the service binding and returns the session', async () => {
+    it('forwards only the session-token cookie to get-session, bypassing Better Auth’s cookie cache', async () => {
       const expiresAt = new Date(Date.now() + 3_600_000);
       const { binding, fetch, seen } = fakeAuthBinding(expiresAt);
       const kv = new FakeKV();
       const client = buildSessionClient({ auth: binding, kv, basePath: BASE_PATH });
 
+      // A browser's full jar: Better Auth's own cookie-cache cookie rides
+      // alongside the session token. It must not reach the auth Worker,
+      // whose cookie cache would answer for a session it has since revoked.
       const incoming = new Request('https://api.example.com/me', {
-        headers: { cookie: VALID_COOKIE },
+        headers: { cookie: `other=1; ${VALID_COOKIE}; better-auth.session_data=stale.signed.blob` },
       });
       const result = await client.get(incoming);
 
       expect(fetch).toHaveBeenCalledTimes(1);
       const forwarded = seen[0];
-      expect(new URL(forwarded.url).pathname).toBe(`${BASE_PATH}/get-session`);
+      const url = new URL(forwarded.url);
+      expect(url.pathname).toBe(`${BASE_PATH}/get-session`);
+      expect(url.searchParams.get('disableCookieCache')).toBe('true');
       expect(forwarded.method).toBe('GET');
       expect(forwarded.headers.get('cookie')).toBe(VALID_COOKIE);
 

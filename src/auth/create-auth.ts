@@ -170,8 +170,11 @@ function buildAuthConfig(
     ...(database !== undefined && { database }),
     ...(secondaryStorage !== undefined && { secondaryStorage }),
     ...(socialProviders !== undefined && { socialProviders }),
-    plugins,
     ...options?.betterAuth,
+    // Placed after the escape hatch on purpose: `betterAuth.plugins` is
+    // folded into this list by buildPlugins, never allowed to replace the
+    // package's own (admin, sign-in methods, allowedMethods stubs, bearer).
+    plugins,
     advanced: buildAdvancedConfig(options),
     session,
     ...(rateLimit !== undefined && { rateLimit }),
