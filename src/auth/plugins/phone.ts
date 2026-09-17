@@ -1,8 +1,7 @@
 import type { PhoneNumberOptions } from 'better-auth/plugins';
 import { phoneNumber } from 'better-auth/plugins';
 
-import { getExecutionContext, runNonBlocking } from '../../shared/non-blocking';
-import type { ExecutionContext } from '../../types';
+import { type ContextRef, getExecutionContext, runNonBlocking } from '../../shared/non-blocking';
 import type { CreateAuthPhoneOptions } from '../types';
 
 const E164_REGEX = /^\+[1-9]\d{1,14}$/;
@@ -21,8 +20,8 @@ function isValidE164(phoneNumber: string): boolean {
 }
 
 export function buildPhonePlugin(
-  phoneOpts?: CreateAuthPhoneOptions,
-  optionsCtx?: ExecutionContext
+  phoneOpts: CreateAuthPhoneOptions | undefined,
+  ctxRef: ContextRef
 ) {
   if (!phoneOpts) return;
   const phonePluginOptions: PhoneNumberOptions = {
@@ -37,7 +36,7 @@ export function buildPhonePlugin(
         return;
       }
       const req = ctx?.request;
-      const execCtx = getExecutionContext(req, optionsCtx);
+      const execCtx = getExecutionContext(req, ctxRef.current);
       runNonBlocking(
         async () => {
           await phoneOpts.sendOTP(data, req);

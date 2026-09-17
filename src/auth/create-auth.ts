@@ -1,107 +1,105 @@
 import { betterAuth } from 'better-auth';
 import { createAuthMiddleware } from 'better-auth/api';
 
-import { withHandlerContext } from '../shared/non-blocking';
-import type { AuthEnv, ConfigValue } from '../types';
+import { type ContextRef, withHandlerContext } from '../shared/non-blocking';
+import type { AuthEnv, ConfigValue, ExecutionContext } from '../types';
 import { buildAllowedMethodsHook } from './allowed-methods';
 import { buildRateLimitConfig, buildSessionConfig } from './config';
-import { resolveDatabase, resolveHyperdriveConnectionString } from './database';
+import {
+  resolveDatabase,
+  type ResolvedDatabase,
+  resolveHyperdriveConnectionString,
+} from './database';
 import { resolveBaseURL, resolveSecret } from './env';
-import { getOptionsKey, normalizeArgs } from './normalize';
+import { getOptionsKey } from './options-key';
 import { buildPlugins, buildSocialProviders } from './plugins';
 import { withPoolLifecycle } from './postgres-pool';
 import { buildSecondaryStorage } from './secondary-storage';
-import { buildSessionInvalidationHook } from './session-invalidation';
-import type { CreateAuthOptions } from './types';
+import { buildSessionInvalidationHook, buildSessionTokenCollector } from './session-invalidation';
+import type { CreateAuthHook, CreateAuthHooks, CreateAuthOptions } from './types';
 import { validateConfig } from './validate';
 
-export type AuthInstance = ReturnType<typeof betterAuth>;
+type BetterAuthInstance = ReturnType<typeof betterAuth>;
 
-// Better Auth's dispatcher hands `hooks.after` the raw dispatch context, which
+// Better Auth's own instance, with `handler` widened to take the request's
+// ExecutionContext: `auth.handler(request, ctx)` is how a Worker hands the
+// package the context its waitUntil work runs on.
+export type AuthInstance = Omit<BetterAuthInstance, 'handler'> & {
+  handler: (request: Request, ctx?: ExecutionContext) => Promise<Response>;
+};
+
+// Better Auth's dispatcher hands hooks the raw dispatch context, which
 // carries the request headers but not the cookie helpers (`getSignedCookie`)
 // an endpoint handler gets. `createAuthMiddleware` builds those helpers from
-// the request, so the invalidation hook can read the signed session cookie
-// on `/sign-out` over HTTP. A context that already has the helpers (a direct
-// call with an endpoint context) is used as is, since re-wrapping would
-// replace its `getSignedCookie` with one that only sees request headers.
-function withEndpointContext(
-  handler: (ctx: never) => Promise<void>
-): (ctx: never) => Promise<unknown> {
-  const wrapped = createAuthMiddleware(handler as never) as unknown as (
-    ctx: never
-  ) => Promise<unknown>;
+// the request, so a hook can read the signed session cookie over HTTP. A
+// context that already has the helpers (a direct call with an endpoint
+// context) is used as is, since re-wrapping would replace its
+// `getSignedCookie` with one that only sees request headers.
+function withEndpointContext(handler: (ctx: never) => Promise<void>): CreateAuthHook {
+  const wrapped = createAuthMiddleware(handler as never) as unknown as CreateAuthHook;
   return (ctx: never) =>
     typeof (ctx as { getSignedCookie?: unknown }).getSignedCookie === 'function'
       ? handler(ctx)
       : wrapped(ctx);
 }
 
-// Composes any user-supplied `hooks.after` with the session-cache
-// invalidation hook, so wiring cache invalidation never clobbers a hook a
-// consumer configured through `options.hooks` or `options.betterAuth.hooks`.
-// The dispatcher reads `headers` and `response` off whatever the hook
-// resolves to, so this always resolves to an object: the user's result when
-// there is one, an empty one otherwise.
-function mergeAfterHook(
-  existing: { after?: (ctx: never) => Promise<unknown> } | undefined,
-  invalidateSessionCache: (ctx: never) => Promise<void>
-): { after: (ctx: never) => Promise<unknown> } {
-  const existingAfter = existing?.after;
-  const invalidate = withEndpointContext(invalidateSessionCache);
-  return {
-    after: async (ctx: never) => {
-      const result = await existingAfter?.(ctx);
-      await invalidate(ctx);
-      return result ?? {};
-    },
+// Our hooks run before the user's in `before` (a disallowed method is
+// rejected before the user's hook sees the request) and after the user's
+// in `after`; the user's return value is what Better Auth sees in both
+// cases. Both compositions resolve to a promise: Better Auth's hook runner
+// awaits the return value, and a bare synchronous function would make its
+// tracing wrapper return a non-promise and crash the runner's `.catch`.
+function composeBefore(ours: CreateAuthHook[], user: CreateAuthHook | undefined): CreateAuthHook {
+  return async (ctx: never) => {
+    for (const hook of ours) await hook(ctx);
+    return await user?.(ctx);
   };
 }
 
-// Composes any user-supplied `hooks.before` with the allowedMethods
-// restriction, so wiring the restriction never clobbers a hook a consumer
-// configured through `options.hooks` or `options.betterAuth.hooks`. The
-// restriction runs first so a disallowed method is rejected before the
-// user's hook sees the request.
-function mergeBeforeHook(
-  existing: { before?: (ctx: never) => Promise<unknown> } | undefined,
-  checkAllowedMethods: (ctx: never) => void
-): { before: (ctx: never) => Promise<unknown> } {
-  const existingBefore = existing?.before;
-  return {
-    // Better Auth's hook runner always awaits the return value of
-    // `hooks.before`, so this must resolve to a promise even when there is
-    // no user-supplied `before` hook to compose with (a bare synchronous
-    // function would make `withSpan` return the raw, non-promise value and
-    // crash the runner's `.catch` chain).
-    before: async (ctx: never) => {
-      checkAllowedMethods(ctx);
-      return await existingBefore?.(ctx);
-    },
+// The dispatcher reads `headers` and `response` off whatever the after
+// hook resolves to, so this always resolves to an object: the user's
+// result when there is one, an empty one otherwise.
+function composeAfter(ours: CreateAuthHook[], user: CreateAuthHook | undefined): CreateAuthHook {
+  return async (ctx: never) => {
+    const result = await user?.(ctx);
+    for (const hook of ours) await hook(ctx);
+    return result ?? {};
   };
 }
 
+interface OwnHooks {
+  before: CreateAuthHook[];
+  after: CreateAuthHook[];
+}
+
+// Composes whichever of our hooks are active with the user's
+// `hooks.before` and `hooks.after` (from `options.hooks` or
+// `options.betterAuth.hooks`). The user's hook in either slot survives
+// regardless of which of ours is active, so wiring cache invalidation never
+// drops a user `before`, and restricting methods never drops a user `after`.
 function buildHooksField(
   options: CreateAuthOptions | undefined,
-  invalidateSessionCache: ((ctx: never) => Promise<void>) | undefined,
-  checkAllowedMethods: ((ctx: never) => void) | undefined
-):
-  | Record<string, never>
-  | {
-      hooks: {
-        after?: (ctx: never) => Promise<unknown>;
-        before?: (ctx: never) => unknown;
-      };
-    } {
-  if (!invalidateSessionCache && !checkAllowedMethods) return {};
-  const existing = (options?.betterAuth?.hooks ?? options?.hooks) as
-    | { after?: (ctx: never) => Promise<unknown>; before?: (ctx: never) => Promise<unknown> }
-    | undefined;
-  return {
-    hooks: {
-      ...(invalidateSessionCache && mergeAfterHook(existing, invalidateSessionCache)),
-      ...(checkAllowedMethods && mergeBeforeHook(existing, checkAllowedMethods)),
-    },
-  };
+  ours: OwnHooks
+): Record<string, never> | { hooks: CreateAuthHooks } {
+  if (ours.before.length === 0 && ours.after.length === 0) return {};
+  const user = (options?.betterAuth?.hooks ?? options?.hooks) as CreateAuthHooks | undefined;
+  const hooks: CreateAuthHooks = {};
+  if (ours.before.length > 0 || user?.before)
+    hooks.before = composeBefore(ours.before, user?.before);
+  if (ours.after.length > 0 || user?.after) hooks.after = composeAfter(ours.after, user?.after);
+  return { hooks };
+}
+
+function buildOwnHooks(options: CreateAuthOptions | undefined, env: AuthEnv): OwnHooks {
+  const before: CreateAuthHook[] = [];
+  const after: CreateAuthHook[] = [];
+  const checkAllowedMethods = buildAllowedMethodsHook(options);
+  if (checkAllowedMethods) before.push(checkAllowedMethods);
+  const collectSessionTokens = buildSessionTokenCollector(options, env);
+  if (collectSessionTokens) before.push(withEndpointContext(collectSessionTokens));
+  const invalidateSessionCache = buildSessionInvalidationHook(options, env);
+  if (invalidateSessionCache) after.push(withEndpointContext(invalidateSessionCache));
+  return { before, after };
 }
 
 // Schema validation is off by default because the schema ships as SQL
@@ -120,57 +118,48 @@ function buildAdvancedConfig(options?: CreateAuthOptions): Record<string, Config
   };
 }
 
-const instanceCache = new WeakMap<object, Map<string, AuthInstance>>();
+interface CachedInstance {
+  instance: AuthInstance;
+  ctxRef: ContextRef;
+}
 
-function getCachedInstance(env: object, optionsKey: string): AuthInstance | undefined {
+// Memoisation is per `env` (one per isolate) and per options shape. It only
+// applies to the D1 path: a Hyperdrive instance owns a pg Pool that is
+// released after its request, so it is rebuilt on every call.
+const instanceCache = new WeakMap<object, Map<string, CachedInstance>>();
+
+function getCachedInstance(env: object, optionsKey: string): CachedInstance | undefined {
   return instanceCache.get(env)?.get(optionsKey);
 }
 
-function setCachedInstance(env: object, optionsKey: string, instance: AuthInstance): void {
+function setCachedInstance(env: object, optionsKey: string, cached: CachedInstance): void {
   let envMap = instanceCache.get(env);
   if (!envMap) {
     envMap = new Map();
     instanceCache.set(env, envMap);
   }
-  envMap.set(optionsKey, instance);
+  envMap.set(optionsKey, cached);
 }
 
-export function createAuth(env: AuthEnv, options?: CreateAuthOptions): AuthInstance;
-export function createAuth(options: CreateAuthOptions, env?: AuthEnv): AuthInstance;
-export function createAuth(
-  arg1: AuthEnv | CreateAuthOptions,
-  arg2?: CreateAuthOptions | AuthEnv
-): AuthInstance {
-  const { env, options } = normalizeArgs(arg1, arg2);
-  const isHyperdrive = Boolean(resolveHyperdriveConnectionString(options, env));
-  const optionsKey = getOptionsKey(options);
-
-  if (!isHyperdrive) {
-    const cached = getCachedInstance(env, optionsKey);
-    if (cached) {
-      return cached;
-    }
-  }
-
-  validateConfig(options, env);
-
+// Package defaults, then `options`, then what the package resolves and
+// wires (baseURL, secret, storage, plugins, hooks), then the `betterAuth`
+// escape hatch last so it can override anything.
+function buildAuthConfig(
+  env: AuthEnv,
+  options: CreateAuthOptions | undefined,
+  ctxRef: ContextRef,
+  database: ResolvedDatabase | undefined
+): Record<string, ConfigValue> {
   const baseURL = resolveBaseURL(options, env) as string;
   const secret = resolveSecret(options, env) as string;
-  const plugins = buildPlugins(options);
+  const plugins = buildPlugins(options, ctxRef);
   const socialProviders = buildSocialProviders(options, env);
   const secondaryStorage = buildSecondaryStorage(options, env);
-  const { database, pool } = resolveDatabase(options, env) ?? {};
   const session = buildSessionConfig(options);
   const rateLimit = buildRateLimitConfig(options, secondaryStorage);
-  const invalidateSessionCache = buildSessionInvalidationHook(options, env);
-  const checkAllowedMethods = buildAllowedMethodsHook(options);
 
-  const defaults = {
+  return {
     basePath: '/api/auth',
-  };
-
-  const authConfig = {
-    ...defaults,
     ...options,
     baseURL,
     secret,
@@ -182,21 +171,45 @@ export function createAuth(
     advanced: buildAdvancedConfig(options),
     session,
     ...(rateLimit !== undefined && { rateLimit }),
-    ...buildHooksField(options, invalidateSessionCache, checkAllowedMethods),
+    ...buildHooksField(options, buildOwnHooks(options, env)),
   };
+}
 
-  // @ts-expect-error betterAuth accepts custom database adapters like D1/Hyperdrive in Cloudflare Workers
-  const instance = betterAuth(authConfig);
-  void instance.$context.catch(() => {});
+export function createAuth(env: AuthEnv, options?: CreateAuthOptions): AuthInstance {
+  const isHyperdrive = Boolean(resolveHyperdriveConnectionString(options, env));
+  const optionsKey = isHyperdrive ? undefined : getOptionsKey(options);
 
-  withHandlerContext(instance, options?.ctx);
-
-  if (pool) {
-    withPoolLifecycle(instance, pool, options?.ctx);
+  if (optionsKey !== undefined) {
+    const cached = getCachedInstance(env, optionsKey);
+    if (cached) {
+      // The fallback context follows the latest request, not the one that
+      // built the instance; `auth.handler(request, ctx)` still takes
+      // precedence over it.
+      cached.ctxRef.current = options?.ctx;
+      return cached.instance;
+    }
   }
 
-  if (!isHyperdrive) {
-    setCachedInstance(env, optionsKey, instance);
+  validateConfig(options, env);
+
+  const ctxRef: ContextRef = { current: options?.ctx };
+  const { database, pool } = resolveDatabase(options, env) ?? {};
+  const authConfig = buildAuthConfig(env, options, ctxRef, database);
+
+  // The config is assembled as a loose record: it carries a D1 binding or a
+  // pg Pool as `database`, which betterAuth accepts at runtime through its
+  // adapters but does not express in its option types.
+  const instance = betterAuth(authConfig as never) as unknown as AuthInstance;
+  void instance.$context.catch(() => {});
+
+  withHandlerContext(instance, ctxRef);
+
+  if (pool) {
+    withPoolLifecycle(instance, pool, ctxRef);
+  }
+
+  if (optionsKey !== undefined) {
+    setCachedInstance(env, optionsKey, { instance, ctxRef });
   }
 
   return instance;

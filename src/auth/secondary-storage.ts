@@ -1,11 +1,6 @@
 import type { AuthEnv, KVStore } from '../types';
+import { resolveKv } from './kv';
 import type { CreateAuthOptions, CreateAuthSecondaryStorage } from './types';
-
-function resolveKv(options?: CreateAuthOptions, envObj?: Partial<AuthEnv>): KVStore | undefined {
-  const kv = options?.kv ?? envObj?.AUTH_KV;
-  if (!kv || typeof kv !== 'object') return;
-  return kv;
-}
 
 function kvSecondaryStorage(kv: KVStore): CreateAuthSecondaryStorage {
   return {

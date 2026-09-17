@@ -129,7 +129,9 @@ app.on(['GET', 'POST'], '/auth/*', (c) => {
     },
     google: true,
   });
-  return auth.handler(c.req.raw);
+  // Pass the request's ExecutionContext on every call: delivery (sendOTP,
+  // sendMagicLink) is scheduled on it through waitUntil.
+  return auth.handler(c.req.raw, c.executionCtx);
 });
 
 export default app;
@@ -154,7 +156,11 @@ await authClient.phoneNumber.verify({ phoneNumber: '+94771234567', code: '123456
 
 ## Configuration
 
-`createAuth(env, options)` returns a Better Auth instance. The instance is memoised on `env`, so calling it on every request is free after the first call in an isolate.
+`createAuth(env, options)` returns a Better Auth instance. On the D1 path the instance is memoised on `env` (and the shape of `options`), so calling it on every request is free after the first call in an isolate. The Hyperdrive path deliberately does **not** memoise: each call builds a fresh instance around a fresh `pg` Pool that is released after its request (see [Storage](#storage)).
+
+Call `auth.handler(request, ctx)` with the request's `ExecutionContext` on every request. Work the package schedules through `waitUntil` (OTP and magic-link delivery, pool cleanup) runs on the context given to `handler`; `options.ctx` is only a fallback for callers that cannot pass one, and on a memoised instance it is refreshed on each `createAuth` call.
+
+`CreateAuthOptions` is a closed type: a misspelled key (`magicLinks:` for `magicLink:`) is a type error rather than a silently ignored option. Anything Better Auth accepts that is not listed below goes through `betterAuth`.
 
 | Option           | Type                                                    | Default                  | Description                                                                |
 | ---------------- | ------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------- |
@@ -188,6 +194,8 @@ database: {
 
 On each request, a small `pg` Pool is created from `env.HYPERDRIVE.connectionString` and handed to Better Auth. It closes itself after the response, via `waitUntil`. Better Auth talks to it through its bundled Kysely dialect, so you never write a query yourself.
 
+Because the pool is per request, so is the instance: the Hyperdrive path is not memoised, and each instance serves exactly one `auth.handler` call. A second `handler` call on the same instance is refused with an error rather than running against the released pool — call `createAuth(env, options)` again for each request. The pool is only released by `handler`; a Worker that calls `auth.api.*` directly on a Hyperdrive instance owns the pool it created (`auth.options.database`) and must `end()` it itself.
+
 The Worker imports `pg` and passes it in because Workers are bundled: the bundler only includes modules it sees imported, so the package cannot load the driver on your behalf without forcing it on D1 deployments too.
 
 Hyperdrive keeps the real database connections warm behind the scenes, which is what makes creating a new pool on every request cheap.
@@ -208,7 +216,7 @@ Use Postgres when your application data already lives there and you want foreign
 
 ## Sessions and rate limiting on KV
 
-`kv` is required. It's wired up as Better Auth's secondary storage, which is used for two things:
+`kv` is required — `createAuth` refuses to start without `options.kv` or `env.AUTH_KV` (a consumer-supplied `secondaryStorage` also satisfies the check). It's wired up as Better Auth's secondary storage, which is used for two things:
 
 - **Session cache.** Session lookups check KV before the database. With cookie caching on (this package's default), most requests never reach the primary store at all.
 - **Rate limiting.** Better Auth's rate limiter is set to use KV, so limits are shared across isolates instead of living in per-isolate memory.
@@ -291,7 +299,7 @@ Some deployments should only accept some sign-in methods. An internal admin app 
 allowedMethods: ['google'];
 ```
 
-This installs a `before` hook that rejects requests to any other sign-in route with `403`. Those routes stay mounted, so clients get a clear error instead of a `404`.
+This installs a `before` hook that rejects requests to any other _configured_ sign-in method's routes with `403` — a deployment that has `phone` configured but not allowed keeps the phone routes mounted, so clients get a clear error instead of a `404`. A method that is not configured at all (no `phone`, `google` or `magicLink` option) has no plugin registered, so its routes are not mounted and still `404`.
 
 ## Using sessions from another Worker
 
@@ -362,6 +370,8 @@ How it works:
 2. The result is cached in KV, under the session token, for the rest of the session's lifetime.
 3. When the auth Worker signs out or revokes a session, it deletes that KV entry — so the API sees the change on its very next request.
 
+Step 3 covers every route that revokes sessions server-side: `/sign-out`, `/revoke-session`, `/revoke-sessions`, `/revoke-other-sessions`, `/delete-user` (and its callback), and the admin plugin's `/admin/revoke-user-session`, `/admin/revoke-user-sessions` and `/admin/remove-user`. Routes that revoke every session of a user list that user's sessions before the revocation and clear each cache entry after it. Sessions that expire on their own are not invalidated eagerly; their cache entries expire with them.
+
 Step 3 only works if both Workers share the same KV namespace. Separate namespaces still work, but revocation won't be visible until the cache entry expires on its own.
 
 ## Non-browser clients
@@ -424,7 +434,7 @@ Cross-origin deployments are possible too, using Better Auth's `trustedOrigins` 
 - **KV**: local automatically.
 - **OTP**: a `sendOTP` that logs the code to the console is enough for local work. Do not ship it.
 
-The `examples/hono` directory contains a runnable Worker with both storage options.
+The `examples/hono` directory contains a runnable auth Worker with both storage options, plus a second API Worker that consumes its sessions over a service binding; its README covers running both together.
 
 ## Compatibility
 
@@ -444,7 +454,7 @@ Hono is an optional peer dependency. `createAuth` and `createSessionClient` work
 That package integrates Better Auth with Cloudflare through Drizzle, and adds geolocation and R2 helpers. This one talks to `pg` or D1 directly (no ORM), ships SQL instead of a schema file, and adds the cross-Worker session client. Pick whichever matches how you already access your database.
 
 **Why is the auth instance created per request?**
-Because bindings only arrive on `env`, which only exists inside the handler. The instance is memoised per `env` object, so within one isolate you only pay that cost once.
+Because bindings only arrive on `env`, which only exists inside the handler. On D1 the instance is memoised per `env` object, so within one isolate you only pay that cost once. On Hyperdrive it is rebuilt per request on purpose, since the `pg` Pool it wraps is per request too.
 
 **Can I use Better Auth features this package doesn't mention?**
 Yes. `plugins` and `betterAuth` pass straight through — this package never hides or renames anything in Better Auth.

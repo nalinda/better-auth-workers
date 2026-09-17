@@ -36,6 +36,9 @@ jobs:
             echo "Release ${GITHUB_REF_NAME}" > RELEASE_NOTES.md
           fi
 
+      # Not swallowed: a tag push whose draft fails (bad token, tag already
+      # released, network) must fail the job, not leave no release and no
+      # notice.
       - name: Draft GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -43,7 +46,7 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" \
             --draft \
             --title "${GITHUB_REF_NAME}" \
-            --notes-file RELEASE_NOTES.md || true
+            --notes-file RELEASE_NOTES.md
 
       - name: Notify npm publish skipped
         if: ${{ secrets.NPM_TOKEN == '' }}

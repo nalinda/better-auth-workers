@@ -67,6 +67,20 @@ export interface CreateAuthSessionOptions {
   [key: string]: ConfigValue;
 }
 
+// A Better Auth `hooks.before` / `hooks.after` handler. The context is
+// Better Auth's endpoint context; it is left loose here so a consumer can
+// pass a handler built with `createAuthMiddleware` or a plain function.
+export type CreateAuthHook = (ctx: never) => unknown;
+
+export interface CreateAuthHooks {
+  before?: CreateAuthHook;
+  after?: CreateAuthHook;
+}
+
+// Deliberately closed: there is no index signature, so a misspelled key
+// (`magicLinks:` for `magicLink:`) is a type error rather than a silently
+// ignored option. Anything Better Auth accepts that is not listed here goes
+// through `betterAuth`, which is merged last and can override everything.
 export interface CreateAuthOptions {
   basePath?: string;
   baseURL?: string;
@@ -74,6 +88,10 @@ export interface CreateAuthOptions {
   database?: CreateAuthDatabaseOptions | D1Database;
   kv?: KVStore;
   secondaryStorage?: CreateAuthSecondaryStorage;
+  // The request's ExecutionContext. Only a fallback: pass the context to
+  // `auth.handler(request, ctx)` on every request, since a memoised
+  // instance would otherwise keep using the context of the request that
+  // first built it.
   ctx?: ExecutionContext;
   phone?: CreateAuthPhoneOptions;
   magicLink?: CreateAuthMagicLinkOptions;
@@ -83,6 +101,7 @@ export interface CreateAuthOptions {
   plugins?: BetterAuthPlugin[];
   rateLimit?: CreateAuthRateLimitOptions;
   session?: CreateAuthSessionOptions;
+  hooks?: CreateAuthHooks;
+  advanced?: Record<string, ConfigValue>;
   betterAuth?: Record<string, ConfigValue>;
-  [key: string]: ConfigValue;
 }

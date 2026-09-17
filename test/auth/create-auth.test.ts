@@ -1,89 +1,28 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, mock } from 'bun:test';
 
-import { createAuth } from '../../src/index';
+import { type AuthEnv, type AuthInstance, createAuth } from '../../src/index';
+import {
+  buildEnv,
+  createMockExecutionContext,
+  FakeKV,
+  postJSON,
+  VALID_BASE_URL,
+  VALID_SECRET,
+} from '../helpers/auth';
 
-interface CreateAuthOptions {
-  basePath?: string;
-  baseURL?: string;
-  secret?: string;
-  database?: { hyperdrive: unknown } | { d1: unknown };
-  kv?: unknown;
-  phone?: {
-    sendOTP: (
-      args: { phoneNumber: string; code: string },
-      request?: Request
-    ) => Promise<void> | void;
-    otpLength?: number;
-    expiresIn?: number;
-    allowedAttempts?: number;
-  };
-  google?: boolean | { clientId: string; clientSecret: string };
-  bearer?: boolean;
-  allowedMethods?: Array<'phone' | 'google' | 'magic-link'>;
-  plugins?: Array<{ id: string; [key: string]: unknown }>;
-  betterAuth?: Record<string, unknown>;
-  [key: string]: unknown;
-}
-
-interface AuthInstanceLike {
-  handler: (request: Request) => Promise<Response>;
-  api?: unknown;
-  options: {
-    basePath?: string;
-    baseURL?: string;
-    secret?: string;
-    database?: unknown;
-    secondaryStorage?: unknown;
-    plugins?: Array<{ id: string }>;
-  };
-}
-
-const createAuthInstance = (
-  env: Record<string, unknown>,
-  options?: CreateAuthOptions
-): AuthInstanceLike =>
-  (
-    createAuth as unknown as (e: Record<string, unknown>, o?: CreateAuthOptions) => AuthInstanceLike
-  )(env, options);
-
-const validSecret = 'test-secret-at-least-32-chars-long-1234567890';
-const validBaseUrl = 'https://auth.example.com';
-const mockD1 = {
-  prepare: () => ({
-    bind: () => ({
-      all: () => Promise.resolve({ results: [], success: true, meta: { changes: 0 } }),
-      first: () => Promise.resolve(null),
-      run: () => Promise.resolve({ success: true, meta: { changes: 0 } }),
-    }),
-  }),
-  batch: () => Promise.resolve([]),
-  exec: () => Promise.resolve({ count: 0, duration: 0 }),
-};
-const validEnv = {
-  AUTH_BASE_URL: validBaseUrl,
-  BETTER_AUTH_SECRET: validSecret,
-  DB: mockD1,
-};
+const validEnv = buildEnv();
 
 describe('createAuth: instance creation', () => {
   it('builds a Better Auth instance from options and bindings on env', () => {
-    const auth = createAuthInstance(validEnv, {});
+    const auth = createAuth(validEnv, {});
     expect(typeof auth.api).toBe('object');
     expect(typeof auth.handler).toBe('function');
     expect(auth.options).toBeDefined();
   });
 
   it('builds a Better Auth instance using bindings on env', () => {
-    const mockKv = { get: () => {}, put: () => {}, delete: () => {} };
-    const envWithBindings = {
-      ...validEnv,
-      AUTH_KV: mockKv,
-      DB: mockD1,
-    };
-    const auth = createAuthInstance(envWithBindings, {
-      kv: envWithBindings.AUTH_KV,
-      database: { d1: envWithBindings.DB },
-    });
+    const env = buildEnv();
+    const auth = createAuth(env, { kv: env.AUTH_KV, database: { d1: env.DB } });
     expect(auth.options.database).toBeDefined();
     expect(auth.options.secondaryStorage).toBeDefined();
   });
@@ -91,100 +30,163 @@ describe('createAuth: instance creation', () => {
 
 describe('Memoisation', () => {
   it('memoises on the env object so repeated calls return the same instance', () => {
-    const env = { ...validEnv };
-    const auth1 = createAuthInstance(env, {});
-    const auth2 = createAuthInstance(env, {});
+    const env = buildEnv();
+    const auth1 = createAuth(env, {});
+    const auth2 = createAuth(env, {});
     expect(auth1).toBe(auth2);
   });
 
   it('returns different instances for different env objects', () => {
-    const envA = { ...validEnv, id: 'a' };
-    const envB = { ...validEnv, id: 'b' };
-    const authA1 = createAuthInstance(envA, {});
-    const authA2 = createAuthInstance(envA, {});
-    const authB = createAuthInstance(envB, {});
+    const envA = buildEnv();
+    const envB = buildEnv();
+    const authA1 = createAuth(envA, {});
+    const authA2 = createAuth(envA, {});
+    const authB = createAuth(envB, {});
     expect(authA1).toBe(authA2);
     expect(authA1).not.toBe(authB);
+  });
+
+  it('hits the cache for an options literal rebuilt inline with new callbacks and plugin objects', () => {
+    const env = buildEnv();
+    const build = () =>
+      createAuth(env, {
+        basePath: '/auth',
+        phone: { sendOTP: () => {} },
+        plugins: [{ id: 'audit' }],
+        session: { cookieCache: { maxAge: 60 } },
+      });
+    expect(build()).toBe(build());
+  });
+
+  it('does not share an instance between option sets that differ in a primitive field', () => {
+    const env = buildEnv();
+    const a = createAuth(env, { basePath: '/a' });
+    const b = createAuth(env, { basePath: '/b' });
+    expect(a).not.toBe(b);
+  });
+
+  it('does not serialise binding contents or secrets into the cache key', () => {
+    // A binding whose enumerable fields throw when read: serialising it
+    // would blow up, keying it by identity does not.
+    const trap = new Proxy(new FakeKV(), {
+      ownKeys: () => {
+        throw new Error('binding contents must not be read for the cache key');
+      },
+    }) as unknown as KVNamespace;
+    const env = buildEnv({ AUTH_KV: trap });
+    expect(() => createAuth(env, { kv: trap, secret: VALID_SECRET })).not.toThrow();
+  });
+});
+
+const sendOtp = () =>
+  postJSON(`${VALID_BASE_URL}/api/auth/phone-number/send-otp`, { phoneNumber: '+15551234567' });
+
+const getSession = () => new Request(`${VALID_BASE_URL}/api/auth/get-session`);
+
+const pluginIds = (auth: AuthInstance) => auth.options.plugins?.map((plugin) => plugin.id) ?? [];
+
+describe('Execution context per request', () => {
+  it('schedules delivery on the context passed to handler, without any options.ctx', async () => {
+    const { ctx, waitUntil, promises } = createMockExecutionContext();
+    const auth = createAuth(buildEnv(), { phone: { sendOTP: () => {} } });
+
+    const res = await auth.handler(sendOtp(), ctx);
+
+    expect(res.status).toBe(200);
+    expect(waitUntil).toHaveBeenCalledTimes(1);
+    await Promise.all(promises);
+  });
+
+  it('uses each request’s own handler context on a memoised instance, not the one that built it', async () => {
+    const env = buildEnv();
+    const first = createMockExecutionContext();
+    const auth1 = createAuth(env, { phone: { sendOTP: () => {} }, ctx: first.ctx });
+    await auth1.handler(sendOtp(), first.ctx);
+    expect(first.waitUntil).toHaveBeenCalledTimes(1);
+
+    const second = createMockExecutionContext();
+    const auth2 = createAuth(env, { phone: { sendOTP: () => {} }, ctx: second.ctx });
+    expect(auth2).toBe(auth1);
+    await auth2.handler(sendOtp(), second.ctx);
+
+    expect(second.waitUntil).toHaveBeenCalledTimes(1);
+    expect(first.waitUntil).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes the options.ctx fallback on every createAuth call for a memoised instance', async () => {
+    const env = buildEnv();
+    const first = createMockExecutionContext();
+    const auth1 = createAuth(env, { phone: { sendOTP: () => {} }, ctx: first.ctx });
+    await auth1.handler(sendOtp());
+    expect(first.waitUntil).toHaveBeenCalledTimes(1);
+
+    const second = createMockExecutionContext();
+    const auth2 = createAuth(env, { phone: { sendOTP: () => {} }, ctx: second.ctx });
+    expect(auth2).toBe(auth1);
+    await auth2.handler(sendOtp());
+
+    expect(second.waitUntil).toHaveBeenCalledTimes(1);
+    expect(first.waitUntil).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('baseURL and secret resolution', () => {
   it('throws a clear error when baseURL is missing in both options and env', () => {
-    const env = { BETTER_AUTH_SECRET: validSecret };
-    expect(() => createAuthInstance(env, {})).toThrow(/baseURL/i);
+    const env = { ...validEnv, AUTH_BASE_URL: undefined } as unknown as AuthEnv;
+    expect(() => createAuth(env, {})).toThrow(/baseURL/i);
   });
 
   it('throws a clear error when secret is missing in both options and env', () => {
-    const env = { AUTH_BASE_URL: validBaseUrl };
-    expect(() => createAuthInstance(env, {})).toThrow(/secret/i);
+    const env = { ...validEnv, BETTER_AUTH_SECRET: undefined } as unknown as AuthEnv;
+    expect(() => createAuth(env, {})).toThrow(/secret/i);
   });
 
   it('resolves baseURL from options first, taking precedence over env.AUTH_BASE_URL', () => {
-    const env = {
-      ...validEnv,
-      AUTH_BASE_URL: 'https://env.example.com',
-      BETTER_AUTH_SECRET: validSecret,
-    };
-    const auth = createAuthInstance(env, { baseURL: 'https://options.example.com' });
+    const env = buildEnv({ AUTH_BASE_URL: 'https://env.example.com' });
+    const auth = createAuth(env, { baseURL: 'https://options.example.com' });
     expect(auth.options.baseURL).toBe('https://options.example.com');
   });
 
   it('resolves baseURL from env.AUTH_BASE_URL when options.baseURL is omitted', () => {
-    const env = {
-      ...validEnv,
-      AUTH_BASE_URL: 'https://env.example.com',
-      BETTER_AUTH_SECRET: validSecret,
-    };
-    const auth = createAuthInstance(env, {});
+    const env = buildEnv({ AUTH_BASE_URL: 'https://env.example.com' });
+    const auth = createAuth(env, {});
     expect(auth.options.baseURL).toBe('https://env.example.com');
   });
 
   it('resolves secret from options first, taking precedence over env.BETTER_AUTH_SECRET', () => {
-    const env = {
-      ...validEnv,
-      AUTH_BASE_URL: validBaseUrl,
-      BETTER_AUTH_SECRET: 'env-secret-at-least-32-chars-long-12345',
-    };
-    const auth = createAuthInstance(env, {
-      secret: 'options-secret-at-least-32-chars-long-67890',
-    });
+    const env = buildEnv({ BETTER_AUTH_SECRET: 'env-secret-at-least-32-chars-long-12345' });
+    const auth = createAuth(env, { secret: 'options-secret-at-least-32-chars-long-67890' });
     expect(auth.options.secret).toBe('options-secret-at-least-32-chars-long-67890');
   });
 
   it('resolves secret from env.BETTER_AUTH_SECRET when options.secret is omitted', () => {
-    const env = {
-      ...validEnv,
-      AUTH_BASE_URL: validBaseUrl,
-      BETTER_AUTH_SECRET: 'env-secret-at-least-32-chars-long-12345',
-    };
-    const auth = createAuthInstance(env, {});
+    const env = buildEnv({ BETTER_AUTH_SECRET: 'env-secret-at-least-32-chars-long-12345' });
+    const auth = createAuth(env, {});
     expect(auth.options.secret).toBe('env-secret-at-least-32-chars-long-12345');
   });
 });
 
 describe('Merge order and defaults', () => {
   it('applies package default basePath of /api/auth when not specified', () => {
-    const auth = createAuthInstance(validEnv, {});
+    const auth = createAuth(validEnv, {});
     expect(auth.options.basePath).toBe('/api/auth');
   });
 
   it('allows options to override package defaults', () => {
-    const auth = createAuthInstance(validEnv, { basePath: '/custom-auth' });
+    const auth = createAuth(validEnv, { basePath: '/custom-auth' });
     expect(auth.options.basePath).toBe('/custom-auth');
   });
 
   it('merges options.betterAuth last so it can override anything', () => {
-    const auth = createAuthInstance(validEnv, {
+    const auth = createAuth(validEnv, {
       basePath: '/custom-auth',
-      betterAuth: {
-        basePath: '/overridden-by-better-auth',
-      },
+      betterAuth: { basePath: '/overridden-by-better-auth' },
     });
     expect(auth.options.basePath).toBe('/overridden-by-better-auth');
   });
 
   it('allows options.betterAuth to override baseURL and secret resolved from options and env', () => {
-    const auth = createAuthInstance(validEnv, {
+    const auth = createAuth(validEnv, {
       baseURL: 'https://options.example.com',
       secret: 'options-secret-at-least-32-chars-long-12345',
       betterAuth: {
@@ -199,71 +201,100 @@ describe('Merge order and defaults', () => {
 
 describe('Plugin configuration', () => {
   it('enables the admin plugin by default without phone or bearer plugins', () => {
-    const auth = createAuthInstance(validEnv, {});
-    const pluginIds = auth.options.plugins?.map((p) => p.id) ?? [];
-    expect(pluginIds).toEqual(['admin']);
+    expect(pluginIds(createAuth(validEnv, {}))).toEqual(['admin']);
   });
 
   it('does not enable bearer or phone plugins when bearer is false and phone is undefined', () => {
-    const auth = createAuthInstance(validEnv, {
-      bearer: false,
-      phone: undefined,
-    });
-    const pluginIds = auth.options.plugins?.map((p) => p.id) ?? [];
-    expect(pluginIds).toEqual(['admin']);
+    expect(pluginIds(createAuth(validEnv, { bearer: false, phone: undefined }))).toEqual(['admin']);
   });
 
   it('enables the phone-number plugin when options.phone is set', () => {
-    const auth = createAuthInstance(validEnv, {
-      phone: {
-        sendOTP: async () => {},
-      },
-    });
-    const pluginIds = auth.options.plugins?.map((p) => p.id) ?? [];
-    expect(pluginIds).toEqual(['admin', 'phone-number']);
+    const auth = createAuth(validEnv, { phone: { sendOTP: async () => {} } });
+    expect(pluginIds(auth)).toEqual(['admin', 'phone-number']);
   });
 
   it('enables the bearer plugin when options.bearer is true', () => {
-    const auth = createAuthInstance(validEnv, {
-      bearer: true,
-    });
-    const pluginIds = auth.options.plugins?.map((p) => p.id) ?? [];
-    expect(pluginIds).toEqual(['admin', 'bearer']);
+    expect(pluginIds(createAuth(validEnv, { bearer: true }))).toEqual(['admin', 'bearer']);
   });
 
   it('enables both phone-number and bearer plugins when both options are set', () => {
-    const auth = createAuthInstance(validEnv, {
-      phone: {
-        sendOTP: async () => {},
-      },
-      bearer: true,
-    });
-    const pluginIds = auth.options.plugins?.map((p) => p.id) ?? [];
-    expect(pluginIds).toEqual(['admin', 'phone-number', 'bearer']);
+    const auth = createAuth(validEnv, { phone: { sendOTP: async () => {} }, bearer: true });
+    expect(pluginIds(auth)).toEqual(['admin', 'phone-number', 'bearer']);
   });
 
   it('appends options.plugins after the built-in plugins', () => {
-    const customPlugin = { id: 'custom-audit-plugin' };
-    const auth = createAuthInstance(validEnv, {
-      phone: {
-        sendOTP: async () => {},
-      },
+    const auth = createAuth(validEnv, {
+      phone: { sendOTP: async () => {} },
       bearer: true,
-      plugins: [customPlugin],
+      plugins: [{ id: 'custom-audit-plugin' }],
     });
-    const pluginIds = auth.options.plugins?.map((p) => p.id) ?? [];
-    expect(pluginIds).toEqual(['admin', 'phone-number', 'bearer', 'custom-audit-plugin']);
+    expect(pluginIds(auth)).toEqual(['admin', 'phone-number', 'bearer', 'custom-audit-plugin']);
+  });
+});
+
+describe('Hook composition', () => {
+  it('keeps a user hooks.before when only KV (an after hook of ours) is configured', async () => {
+    const before = mock(async (_ctx: unknown) => {
+      await Promise.resolve();
+    });
+    // KV on, allowedMethods off: only our `after` hook is active.
+    const auth = createAuth(buildEnv(), { hooks: { before } });
+
+    await auth.handler(getSession());
+
+    expect(before).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a user hooks.after when only allowedMethods (a before hook of ours) is configured', async () => {
+    const after = mock(async (_ctx: unknown) => {
+      await Promise.resolve();
+    });
+    // allowedMethods on, KV replaced by a custom secondaryStorage so no
+    // after hook of ours is active.
+    const env = buildEnv({ AUTH_KV: undefined as unknown as KVNamespace });
+    const auth = createAuth(env, {
+      secondaryStorage: new FakeKV() as never,
+      allowedMethods: ['google'],
+      hooks: { after },
+    });
+
+    await auth.handler(getSession());
+
+    expect(after).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps both user hooks when both of ours are active', async () => {
+    const calls: string[] = [];
+    const auth = createAuth(buildEnv(), {
+      allowedMethods: ['google'],
+      betterAuth: {
+        hooks: {
+          before: async () => {
+            await Promise.resolve();
+            calls.push('before');
+          },
+          after: async () => {
+            await Promise.resolve();
+            calls.push('after');
+          },
+        },
+      },
+    });
+
+    await auth.handler(getSession());
+
+    expect(calls).toEqual(['before', 'after']);
   });
 });
 
 describe('Worker route serving', () => {
   it('threads a configurable basePath into the instance options', () => {
-    const auth = createAuthInstance(validEnv, { basePath: '/custom-auth' });
+    const auth = createAuth(validEnv, { basePath: '/custom-auth' });
     expect(auth.options.basePath).toBe('/custom-auth');
   });
 
   it('exposes a fetch-compatible handler a Worker or Hono route can call directly', () => {
-    const auth = createAuthInstance(validEnv, { basePath: '/auth' });
+    const auth = createAuth(validEnv, { basePath: '/auth' });
     expect(typeof auth.handler).toBe('function');
   });
 });

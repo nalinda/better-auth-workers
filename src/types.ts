@@ -1,3 +1,6 @@
+// The bindings createAuth reads. Extend it (`interface Env extends AuthEnv`)
+// with whatever else the Worker binds; there is no index signature, so the
+// package's own bindings stay exactly typed.
 export interface AuthEnv {
   // KV namespace used for secondary storage, rate limiting and session-cache invalidation.
   AUTH_KV: KVNamespace;
@@ -13,16 +16,6 @@ export interface AuthEnv {
   GOOGLE_CLIENT_ID?: string;
   // Google OAuth client secret; required together with GOOGLE_CLIENT_ID when google: true.
   GOOGLE_CLIENT_SECRET?: string;
-  [key: string]:
-    | string
-    | KVNamespace
-    | Hyperdrive
-    | D1Database
-    | Fetcher
-    | boolean
-    | number
-    | object
-    | undefined;
 }
 
 export interface ExecutionContext {

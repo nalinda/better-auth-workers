@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 
-import { createAuth } from '../../src/index';
+import { type AuthEnv, createAuth } from '../../src/index';
+import { buildEnv, createMockD1 } from '../helpers/auth';
 
 interface MockPoolConfig {
   connectionString?: string;
@@ -23,103 +24,49 @@ void mock.module('pg', () => ({
   default: { Pool: MockPool },
 }));
 
-interface AuthInstanceLike {
-  options: { database?: unknown };
-}
-
-type LooseCreateAuth = (
-  arg1: Record<string, unknown>,
-  arg2?: Record<string, unknown>
-) => AuthInstanceLike;
-
-const callCreateAuth = createAuth as unknown as LooseCreateAuth;
-
-function createMockD1() {
-  return {
-    prepare: mock((_query: string) => ({
-      bind: mock((..._params: unknown[]) => ({
-        all: mock(() => Promise.resolve({ results: [], success: true, meta: { changes: 0 } })),
-        first: mock(() => Promise.resolve(null)),
-        run: mock(() => Promise.resolve({ success: true, meta: { changes: 0 } })),
-      })),
-    })),
-    batch: mock((_stmts: unknown[]) => Promise.resolve([])),
-    exec: mock((_query: string) => Promise.resolve({ count: 0, duration: 0 })),
-  };
-}
-
 describe('D1 as the primary store', () => {
-  const validSecret = 'test-secret-at-least-32-chars-long-1234567890';
-  const validBaseUrl = 'https://auth.example.com';
-  const validEnv = {
-    AUTH_BASE_URL: validBaseUrl,
-    BETTER_AUTH_SECRET: validSecret,
-  };
-
   beforeEach(() => {
     capturedPools.length = 0;
   });
 
   describe('D1 binding plumbing and configuration', () => {
-    it('passes the D1 binding straight through as Better Auth database config when called as createAuth({ database: { d1 } }, env)', () => {
-      const mockD1 = createMockD1();
-      const env = { ...validEnv };
-      const auth = callCreateAuth(
-        {
-          database: { d1: mockD1 },
-        },
-        env
-      );
+    it('passes the D1 binding straight through as Better Auth database config when called as createAuth(env, { database: { d1 } })', () => {
+      const mockD1 = createMockD1().asBinding();
+      const auth = createAuth(buildEnv({ DB: undefined }), { database: { d1: mockD1 } });
 
       expect(auth.options.database).toBe(mockD1);
       expect(capturedPools).toHaveLength(0);
     });
 
-    it('passes the D1 binding straight through when called as createAuth(env, { database: { d1 } })', () => {
-      const mockD1 = createMockD1();
-      const env = { ...validEnv };
-      const auth = callCreateAuth(env, {
-        database: { d1: mockD1 },
-      });
+    it('prefers options.database.d1 over env.DB', () => {
+      const optionsD1 = createMockD1().asBinding();
+      const envD1 = createMockD1().asBinding();
+      const auth = createAuth(buildEnv({ DB: envD1 }), { database: { d1: optionsD1 } });
 
-      expect(auth.options.database).toBe(mockD1);
-      expect(capturedPools).toHaveLength(0);
+      expect(auth.options.database).toBe(optionsD1);
     });
 
     it('uses env.DB straight through as Better Auth database config when options.database is omitted', () => {
-      const mockD1 = createMockD1();
-      const envWithD1 = {
-        ...validEnv,
-        DB: mockD1,
-      };
-
-      const auth = callCreateAuth(envWithD1);
+      const mockD1 = createMockD1().asBinding();
+      const auth = createAuth(buildEnv({ DB: mockD1 }));
 
       expect(auth.options.database).toBe(mockD1);
       expect(capturedPools).toHaveLength(0);
     });
 
     it('throws a clear error when neither hyperdrive nor d1 is configured on options or env', () => {
-      const envWithoutDb = {
-        AUTH_BASE_URL: validBaseUrl,
-        BETTER_AUTH_SECRET: validSecret,
-      };
+      const envWithoutDb = buildEnv({ DB: undefined });
 
-      expect(() => callCreateAuth(envWithoutDb)).toThrow(/database/i);
-      expect(() => callCreateAuth(envWithoutDb, {})).toThrow(/database/i);
-      expect(() => callCreateAuth(envWithoutDb, { database: {} })).toThrow(/database/i);
-      expect(() => callCreateAuth({}, envWithoutDb)).toThrow(/database/i);
+      expect(() => createAuth(envWithoutDb)).toThrow(/database/i);
+      expect(() => createAuth(envWithoutDb, {})).toThrow(/database/i);
+      expect(() => createAuth(envWithoutDb, { database: {} })).toThrow(/database/i);
     });
 
     it('memoises the Better Auth instance on env across calls when using D1', () => {
-      const mockD1 = createMockD1();
-      const envWithD1 = {
-        ...validEnv,
-        DB: mockD1,
-      };
+      const env: AuthEnv = buildEnv();
 
-      const auth1 = callCreateAuth(envWithD1);
-      const auth2 = callCreateAuth(envWithD1);
+      const auth1 = createAuth(env);
+      const auth2 = createAuth(env);
 
       expect(auth1).toBe(auth2);
     });

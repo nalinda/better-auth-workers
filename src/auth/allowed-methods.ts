@@ -26,10 +26,11 @@ function forbidden(message: string): never {
 
 /**
  * Builds the `hooks.before` handler that rejects sign-in routes for methods
- * not present in `options.allowedMethods` with a 403, so a deployment
- * configured with only a subset of sign-in methods gives clients a clear
- * error instead of a silent 404 (the routes stay mounted since the plugins
- * are always registered).
+ * not present in `options.allowedMethods` with a 403, so a deployment that
+ * has a method configured (`phone`, `google`, `magicLink`) but not allowed
+ * gives clients a clear error instead of serving the route. The 403 applies
+ * to configured methods only: a method that is not configured at all has no
+ * plugin registered, so its routes are not mounted and still 404.
  *
  * Get-session, sign-out and account-management routes are never restricted,
  * since this check only ever matches sign-in route paths.

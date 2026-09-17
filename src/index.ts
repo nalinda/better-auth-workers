@@ -4,6 +4,8 @@ export type { ResolvedDatabase } from './auth/database';
 export type {
   CreateAuthCookieCacheOptions,
   CreateAuthDatabaseOptions,
+  CreateAuthHook,
+  CreateAuthHooks,
   CreateAuthOptions,
   CreateAuthPhoneOptions,
   CreateAuthRateLimitOptions,

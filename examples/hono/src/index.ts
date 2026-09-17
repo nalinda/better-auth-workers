@@ -13,7 +13,6 @@ app.on(['GET', 'POST'], '/auth/*', (c) => {
     // The Worker imports the pg driver itself so the bundler includes it.
     database: c.env.HYPERDRIVE ? { hyperdrive: c.env.HYPERDRIVE, pg } : { d1: c.env.DB },
     kv: c.env.AUTH_KV,
-    ctx: c.executionCtx,
     phone: {
       sendOTP: ({ phoneNumber, code }) => {
         // [local use only - not for production]
@@ -21,11 +20,19 @@ app.on(['GET', 'POST'], '/auth/*', (c) => {
         console.log(`[local use only - not for production] OTP for ${phoneNumber}: ${code}`);
       },
     },
+    magicLink: {
+      sendMagicLink: ({ email, url }) => {
+        // [local use only - not for production]
+        // Logs the link instead of emailing it; open it from the terminal to sign in.
+        console.log(`[local use only - not for production] Magic link for ${email}: ${url}`);
+      },
+    },
     google: hasGoogle ? true : undefined,
     bearer: true,
-    // Sign-in methods this deployment accepts; anything else is refused with
-    // 403 rather than reaching the (still mounted) plugin route.
-    allowedMethods: hasGoogle ? ['phone', 'google'] : ['phone'],
+    // Sign-in methods this deployment accepts. A configured method left out
+    // of this list is refused with 403; a method that is not configured at
+    // all has no routes and 404s.
+    allowedMethods: hasGoogle ? ['phone', 'magic-link', 'google'] : ['phone', 'magic-link'],
     betterAuth: {
       advanced: {
         // This Worker serves non-browser clients (phone OTP + bearer) that
@@ -37,7 +44,10 @@ app.on(['GET', 'POST'], '/auth/*', (c) => {
     },
   });
 
-  return auth.handler(c.req.raw);
+  // The request's ExecutionContext goes with every call: the instance is
+  // memoised, so delivery scheduled through waitUntil (OTP, magic link)
+  // must run on this request's context, not the one that built it.
+  return auth.handler(c.req.raw, c.executionCtx);
 });
 
 export default app;

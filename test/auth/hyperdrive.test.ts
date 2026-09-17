@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 
 import { createAuth } from '../../src/index';
+import { buildEnv, createMockExecutionContext, VALID_BASE_URL } from '../helpers/auth';
 
 interface MockPoolConfig {
   connectionString?: string;
@@ -50,50 +51,16 @@ afterAll(() => {
   pgModule.Pool = realPool;
 });
 
-interface CreateAuthOptions {
-  basePath?: string;
-  baseURL?: string;
-  secret?: string;
-  database?: { hyperdrive?: unknown; d1?: unknown; pg?: unknown };
-  kv?: unknown;
-  ctx?: { waitUntil: (promise: Promise<unknown>) => void; passThroughOnException?: () => void };
-  phone?: {
-    sendOTP: (
-      args: { phoneNumber: string; code: string },
-      request?: Request
-    ) => Promise<void> | void;
-    otpLength?: number;
-    expiresIn?: number;
-    allowedAttempts?: number;
-  };
-  google?: boolean | { clientId: string; clientSecret: string };
-  bearer?: boolean;
-  allowedMethods?: Array<'phone' | 'google' | 'magic-link'>;
-  plugins?: Array<{ id: string; [key: string]: unknown }>;
-  betterAuth?: Record<string, unknown>;
-  [key: string]: unknown;
+// Hyperdrive bindings in tests are plain objects carrying only the
+// connection string, which is all the package reads off the binding.
+function hyperdrive(connectionString: string): Hyperdrive {
+  return { connectionString } as Hyperdrive;
 }
-
-interface AuthInstanceLike {
-  handler: (request: Request, ctx?: unknown) => Promise<Response>;
-  options: { database?: unknown };
-}
-
-const createAuthInstance = (
-  env: Record<string, unknown>,
-  options?: CreateAuthOptions
-): AuthInstanceLike =>
-  (
-    createAuth as unknown as (e: Record<string, unknown>, o?: CreateAuthOptions) => AuthInstanceLike
-  )(env, options);
 
 describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
-  const validSecret = 'test-secret-at-least-32-chars-long-1234567890';
-  const validBaseUrl = 'https://auth.example.com';
-  const validEnv = {
-    AUTH_BASE_URL: validBaseUrl,
-    BETTER_AUTH_SECRET: validSecret,
-  };
+  // No D1 binding: the Hyperdrive binding is the database.
+  const validEnv = buildEnv({ DB: undefined });
+  const DEFAULT_CONNECTION_STRING = 'postgres://user:pass@hyperdrive.local:5432/authdb';
 
   beforeEach(() => {
     capturedPools.length = 0;
@@ -102,12 +69,9 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
   describe('Pool construction and configuration', () => {
     it('constructs a pg Pool from env.HYPERDRIVE.connectionString with a bounded max', () => {
       const connectionString = 'postgres://user:pass@hyperdrive.local:5432/authdb';
-      const env = {
-        ...validEnv,
-        HYPERDRIVE: { connectionString },
-      };
+      const env = { ...validEnv, HYPERDRIVE: hyperdrive(connectionString) };
 
-      createAuthInstance(env, {
+      createAuth(env, {
         database: { hyperdrive: env.HYPERDRIVE },
       });
 
@@ -121,10 +85,7 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
 
     it('constructs the Pool from a pg driver passed as database.pg, as a bundled Worker must', () => {
       const connectionString = 'postgres://user:pass@hyperdrive.local:5432/authdb';
-      const env = {
-        ...validEnv,
-        HYPERDRIVE: { connectionString },
-      };
+      const env = { ...validEnv, HYPERDRIVE: hyperdrive(connectionString) };
       const suppliedPools: MockPoolConfig[] = [];
       class SuppliedPool {
         end = () => Promise.resolve();
@@ -133,7 +94,7 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
         }
       }
 
-      const auth = createAuthInstance(env, {
+      const auth = createAuth(env, {
         database: { hyperdrive: env.HYPERDRIVE, pg: { Pool: SuppliedPool } },
       });
 
@@ -145,39 +106,33 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
 
     it('hands the pg Pool to Better Auth database option', () => {
       const connectionString = 'postgres://user:pass@hyperdrive.local:5432/authdb';
-      const env = {
-        ...validEnv,
-        HYPERDRIVE: { connectionString },
-      };
+      const env = { ...validEnv, HYPERDRIVE: hyperdrive(connectionString) };
 
-      const auth = createAuthInstance(env, {
+      const auth = createAuth(env, {
         database: { hyperdrive: env.HYPERDRIVE },
       });
 
       expect(capturedPools).toHaveLength(1);
-      expect(auth.options.database).toBe(capturedPools[0]);
+      expect(auth.options.database as unknown).toBe(capturedPools[0]);
     });
 
     it('creates a pg Pool automatically when env.HYPERDRIVE is present and database option is omitted', () => {
       const connectionString = 'postgres://user:pass@hyperdrive.local:5432/defaultdb';
-      const env = {
-        ...validEnv,
-        HYPERDRIVE: { connectionString },
-      };
+      const env = { ...validEnv, HYPERDRIVE: hyperdrive(connectionString) };
 
-      const auth = createAuthInstance(env);
+      const auth = createAuth(env);
 
       expect(capturedPools).toHaveLength(1);
       expect(capturedPools[0].options.connectionString).toBe(connectionString);
-      expect(auth.options.database).toBe(capturedPools[0]);
+      expect(auth.options.database as unknown).toBe(capturedPools[0]);
     });
 
     it('supports database: { hyperdrive } in options when passed explicitly', () => {
       const customConnectionString = 'postgres://custom:pass@custom-hyperdrive:5432/db';
-      const customHyperdrive = { connectionString: customConnectionString };
+      const customHyperdrive = hyperdrive(customConnectionString);
       const env = { ...validEnv };
 
-      createAuthInstance(env, {
+      createAuth(env, {
         database: { hyperdrive: customHyperdrive },
       });
 
@@ -188,47 +143,31 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
 
   describe('Pool lifecycle and cleanup', () => {
     it('ends the pool exactly once via ctx.waitUntil when an execution context is passed to the handler', async () => {
-      const env = {
-        ...validEnv,
-        HYPERDRIVE: {
-          connectionString: 'postgres://user:pass@hyperdrive.local:5432/authdb',
-        },
-      };
-      const ctx = {
-        waitUntil: mock((_promise: Promise<unknown>) => {}),
-        passThroughOnException: mock(() => {}),
-      };
+      const env = { ...validEnv, HYPERDRIVE: hyperdrive(DEFAULT_CONNECTION_STRING) };
+      const { ctx, waitUntil } = createMockExecutionContext();
 
-      const auth = createAuthInstance(env, {
+      const auth = createAuth(env, {
         database: { hyperdrive: env.HYPERDRIVE },
         ctx,
         betterAuth: { advanced: { database: { validateSchema: false } } },
       });
 
-      const req = new Request('https://auth.example.com/api/auth/ok');
+      const req = new Request(`${VALID_BASE_URL}/api/auth/ok`);
       try {
         await auth.handler(req, ctx);
       } catch {
         // Red phase: adapter initialization may error before hyperdrive pool support is implemented
       }
 
-      expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
+      expect(waitUntil).toHaveBeenCalledTimes(1);
       expect(capturedPools[0]?.endCalls).toBe(1);
     });
 
     it('ends the pool exactly once via ctx.waitUntil after the handler settles even if the handler throws or rejects', async () => {
-      const env = {
-        ...validEnv,
-        HYPERDRIVE: {
-          connectionString: 'postgres://user:pass@hyperdrive.local:5432/authdb',
-        },
-      };
-      const ctx = {
-        waitUntil: mock((_promise: Promise<unknown>) => {}),
-        passThroughOnException: mock(() => {}),
-      };
+      const env = { ...validEnv, HYPERDRIVE: hyperdrive(DEFAULT_CONNECTION_STRING) };
+      const { ctx, waitUntil } = createMockExecutionContext();
 
-      const auth = createAuthInstance(env, {
+      const auth = createAuth(env, {
         database: { hyperdrive: env.HYPERDRIVE },
         ctx,
         plugins: [
@@ -242,26 +181,21 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
         betterAuth: { advanced: { database: { validateSchema: false } } },
       });
 
-      const req = new Request('https://auth.example.com/api/auth/failing-route');
+      const req = new Request(`${VALID_BASE_URL}/api/auth/failing-route`);
       try {
         await auth.handler(req, ctx);
       } catch {
         // Handler rejection expected
       }
 
-      expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
+      expect(waitUntil).toHaveBeenCalledTimes(1);
       expect(capturedPools[0]?.endCalls).toBe(1);
     });
 
     it('schedules ending the pool on the next tick without blocking the response when no execution context is passed', async () => {
-      const env = {
-        ...validEnv,
-        HYPERDRIVE: {
-          connectionString: 'postgres://user:pass@hyperdrive.local:5432/authdb',
-        },
-      };
+      const env = { ...validEnv, HYPERDRIVE: hyperdrive(DEFAULT_CONNECTION_STRING) };
 
-      const auth = createAuthInstance(env, {
+      const auth = createAuth(env, {
         database: { hyperdrive: env.HYPERDRIVE },
         betterAuth: { advanced: { database: { validateSchema: false } } },
       });
@@ -269,7 +203,7 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
       let isPoolEndedBeforeSettlement = false;
       let isHandlerResolved = false;
 
-      const req = new Request('https://auth.example.com/api/auth/ok');
+      const req = new Request(`${VALID_BASE_URL}/api/auth/ok`);
       try {
         const handlerPromise = auth.handler(req);
         if (capturedPools[0]) {
@@ -293,43 +227,62 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
     });
   });
 
+  describe('Instance is single-use', () => {
+    it('refuses a second handler call on the same instance instead of using the released pool', async () => {
+      const env = { ...validEnv, HYPERDRIVE: hyperdrive(DEFAULT_CONNECTION_STRING) };
+      const { ctx } = createMockExecutionContext();
+      const auth = createAuth(env, { database: { hyperdrive: env.HYPERDRIVE }, ctx });
+
+      await auth.handler(new Request(`${VALID_BASE_URL}/api/auth/ok`), ctx);
+      expect(capturedPools[0]?.endCalls).toBe(1);
+
+      let refused: unknown;
+      try {
+        await auth.handler(new Request(`${VALID_BASE_URL}/api/auth/ok`), ctx);
+      } catch (error) {
+        refused = error;
+      }
+      expect(refused).toBeInstanceOf(Error);
+      expect((refused as Error).message).toMatch(/already served a request/);
+      expect(capturedPools[0]?.endCalls).toBe(1);
+    });
+
+    it('never memoises a Hyperdrive instance, so each createAuth call gets its own pool', () => {
+      const env = { ...validEnv, HYPERDRIVE: hyperdrive(DEFAULT_CONNECTION_STRING) };
+      const auth1 = createAuth(env, { database: { hyperdrive: env.HYPERDRIVE } });
+      const auth2 = createAuth(env, { database: { hyperdrive: env.HYPERDRIVE } });
+
+      expect(auth1).not.toBe(auth2);
+      expect(capturedPools).toHaveLength(2);
+    });
+  });
+
   describe('Per-request pool isolation', () => {
     it('creates a new Pool for a second request rather than reusing an ended one', async () => {
-      const env = {
-        ...validEnv,
-        HYPERDRIVE: {
-          connectionString: 'postgres://user:pass@hyperdrive.local:5432/authdb',
-        },
-      };
+      const env = { ...validEnv, HYPERDRIVE: hyperdrive(DEFAULT_CONNECTION_STRING) };
 
-      const ctx1 = {
-        waitUntil: mock((_p: Promise<unknown>) => {}),
-        passThroughOnException: mock(() => {}),
-      };
-      const auth1 = createAuthInstance(env, {
+      const { ctx: ctx1 } = createMockExecutionContext();
+      const auth1 = createAuth(env, {
         database: { hyperdrive: env.HYPERDRIVE },
         ctx: ctx1,
         betterAuth: { advanced: { database: { validateSchema: false } } },
       });
 
       try {
-        await auth1.handler(new Request('https://auth.example.com/api/auth/ok'), ctx1);
+        await auth1.handler(new Request(`${VALID_BASE_URL}/api/auth/ok`), ctx1);
       } catch {
         // the mocked handler may reject; only the pool lifecycle is under test
       }
 
-      const ctx2 = {
-        waitUntil: mock((_p: Promise<unknown>) => {}),
-        passThroughOnException: mock(() => {}),
-      };
-      const auth2 = createAuthInstance(env, {
+      const { ctx: ctx2 } = createMockExecutionContext();
+      const auth2 = createAuth(env, {
         database: { hyperdrive: env.HYPERDRIVE },
         ctx: ctx2,
         betterAuth: { advanced: { database: { validateSchema: false } } },
       });
 
       try {
-        await auth2.handler(new Request('https://auth.example.com/api/auth/ok'), ctx2);
+        await auth2.handler(new Request(`${VALID_BASE_URL}/api/auth/ok`), ctx2);
       } catch {
         // the mocked handler may reject; only the pool lifecycle is under test
       }
@@ -341,27 +294,19 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
     });
 
     it('prevents pool leaks across repeated sequential requests', async () => {
-      const env = {
-        ...validEnv,
-        HYPERDRIVE: {
-          connectionString: 'postgres://user:pass@hyperdrive.local:5432/authdb',
-        },
-      };
+      const env = { ...validEnv, HYPERDRIVE: hyperdrive(DEFAULT_CONNECTION_STRING) };
 
       const requestCount = 50;
       for (let i = 0; i < requestCount; i++) {
-        const ctx = {
-          waitUntil: mock((_p: Promise<unknown>) => {}),
-          passThroughOnException: mock(() => {}),
-        };
-        const auth = createAuthInstance(env, {
+        const { ctx } = createMockExecutionContext();
+        const auth = createAuth(env, {
           database: { hyperdrive: env.HYPERDRIVE },
           ctx,
           betterAuth: { advanced: { database: { validateSchema: false } } },
         });
 
         try {
-          await auth.handler(new Request('https://auth.example.com/api/auth/ok'), ctx);
+          await auth.handler(new Request(`${VALID_BASE_URL}/api/auth/ok`), ctx);
         } catch {
           // the mocked handler may reject; only the pool lifecycle is under test
         }

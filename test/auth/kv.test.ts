@@ -1,189 +1,115 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { describe, expect, it } from 'bun:test';
 
-import { createAuth } from '../../src/index';
+import { type AuthInstance, createAuth } from '../../src/index';
+import { buildEnv, FakeKV, VALID_BASE_URL } from '../helpers/auth';
 
-class FakeKV {
-  readonly store = new Map<string, string>();
-  readonly gets: string[] = [];
-  readonly puts: Array<{ key: string; value: string; options?: { expirationTtl?: number } }> = [];
-  readonly deletes: string[] = [];
+type SecondaryStorage = NonNullable<AuthInstance['options']['secondaryStorage']>;
 
-  get(key: string): Promise<string | null> {
-    this.gets.push(key);
-    return Promise.resolve(this.store.get(key) ?? null);
-  }
-
-  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void> {
-    this.store.set(key, value);
-    this.puts.push({ key, value, options });
-    return Promise.resolve();
-  }
-
-  delete(key: string): Promise<void> {
-    this.store.delete(key);
-    this.deletes.push(key);
-    return Promise.resolve();
-  }
+function secondaryStorageOf(auth: AuthInstance): SecondaryStorage {
+  const storage: SecondaryStorage | undefined = auth.options.secondaryStorage;
+  if (!storage) throw new Error('secondaryStorage is not configured on this instance');
+  return storage;
 }
-
-function createMockD1() {
-  return {
-    prepare: mock(() => ({
-      bind: mock(() => ({
-        all: mock(() => Promise.resolve({ results: [], meta: { changes: 0 } })),
-        first: mock(() => Promise.resolve(null)),
-        run: mock(() => Promise.resolve({ success: true, meta: { changes: 0 } })),
-      })),
-    })),
-    batch: mock(() => Promise.resolve([])),
-    exec: mock(() => Promise.resolve({ count: 0, duration: 0 })),
-  };
-}
-
-interface CreateAuthOptions {
-  basePath?: string;
-  baseURL?: string;
-  secret?: string;
-  database?: { hyperdrive?: unknown; d1?: unknown };
-  kv?: unknown;
-  rateLimit?: {
-    enabled?: boolean;
-    window?: number;
-    max?: number;
-    storage?: 'memory' | 'database' | 'secondary-storage';
-    customRules?: Record<string, unknown>;
-  };
-  session?: {
-    cookieCache?: {
-      enabled?: boolean;
-      maxAge?: number;
-    };
-    storeSessionInDatabase?: boolean;
-  };
-  plugins?: Array<{ id: string; [key: string]: unknown }>;
-  betterAuth?: Record<string, unknown>;
-  [key: string]: unknown;
-}
-
-interface AuthInstanceLike {
-  options: {
-    secondaryStorage?: {
-      get: (key: string) => Promise<string | null>;
-      set: (key: string, value: string, ttl?: number) => Promise<void>;
-      delete: (key: string) => Promise<void>;
-      getAndDelete?: (key: string) => Promise<string | null>;
-      increment?: (key: string, ttl: number) => Promise<number>;
-    };
-    session?: { cookieCache?: { enabled?: boolean } };
-    rateLimit?: { storage?: string };
-  };
-}
-
-type LooseCreateAuth = (
-  arg1: Record<string, unknown>,
-  arg2?: Record<string, unknown>
-) => AuthInstanceLike;
-
-const callCreateAuth = createAuth as unknown as LooseCreateAuth;
-
-const createAuthInstance = (
-  env: Record<string, unknown>,
-  options?: CreateAuthOptions
-): AuthInstanceLike => callCreateAuth(env, options);
 
 describe('KV secondary storage for session cache and rate limiter', () => {
-  const validSecret = 'test-secret-at-least-32-chars-long-1234567890';
-  const validBaseUrl = 'https://auth.example.com';
-  let mockD1: ReturnType<typeof createMockD1>;
-  let validEnv: Record<string, unknown>;
-
-  beforeEach(() => {
-    mockD1 = createMockD1();
-    validEnv = {
-      AUTH_BASE_URL: validBaseUrl,
-      BETTER_AUTH_SECRET: validSecret,
-      DB: mockD1,
-    };
-  });
-
   describe('Secondary storage wiring over KV namespace', () => {
     it('wires options.kv as Better Auth secondaryStorage with get, set with TTL, and delete', async () => {
       const mockKv = new FakeKV();
-      const auth = createAuthInstance(validEnv, { kv: mockKv });
+      const auth = createAuth(buildEnv(), { kv: mockKv });
+      const storage = secondaryStorageOf(auth);
 
-      expect(auth.options.secondaryStorage).toBeDefined();
-
-      // Test set with TTL
-      await auth.options.secondaryStorage?.set('test-key', 'test-value', 300);
+      await storage.set('test-key', 'test-value', 300);
       expect(mockKv.puts).toHaveLength(1);
       expect(mockKv.puts[0]?.key).toBe('test-key');
       expect(mockKv.puts[0]?.value).toBe('test-value');
       expect(mockKv.puts[0]?.options?.expirationTtl).toBe(300);
 
-      // Test get
-      const value = await auth.options.secondaryStorage?.get('test-key');
+      const value = await storage.get('test-key');
       expect(value).toBe('test-value');
 
-      // Test delete
-      await auth.options.secondaryStorage?.delete('test-key');
+      await storage.delete('test-key');
       expect(mockKv.deletes).toContain('test-key');
-      const deletedValue = await auth.options.secondaryStorage?.get('test-key');
+      const deletedValue = await storage.get('test-key');
       expect(deletedValue).toBeNull();
     });
 
     it('wires env.AUTH_KV as secondaryStorage when options.kv is omitted', () => {
       const mockKv = new FakeKV();
-      const envWithKv = { ...validEnv, AUTH_KV: mockKv };
-      const auth = createAuthInstance(envWithKv);
+      const auth = createAuth(buildEnv({ AUTH_KV: mockKv.asBinding() }));
       expect(auth.options.secondaryStorage).toBeDefined();
     });
 
-    it('supports options first argument order: createAuth({ kv }, env)', () => {
-      const mockKv = new FakeKV();
-      const auth = callCreateAuth({ kv: mockKv }, validEnv);
-      expect(auth.options.secondaryStorage).toBeDefined();
+    it('prefers options.kv over env.AUTH_KV', async () => {
+      const optionsKv = new FakeKV();
+      const envKv = new FakeKV();
+      const auth = createAuth(buildEnv({ AUTH_KV: envKv.asBinding() }), { kv: optionsKv });
+
+      await secondaryStorageOf(auth).set('k', 'v');
+
+      expect(optionsKv.puts).toHaveLength(1);
+      expect(envKv.puts).toHaveLength(0);
     });
 
     it('implements getAndDelete on secondaryStorage so one-shot verification values are consumed', async () => {
       const mockKv = new FakeKV();
-      const auth = createAuthInstance(validEnv, { kv: mockKv });
+      const auth = createAuth(buildEnv(), { kv: mockKv });
+      const storage = secondaryStorageOf(auth);
 
-      await auth.options.secondaryStorage?.set('verification:otp', 'code', 300);
-      const consumed = await auth.options.secondaryStorage?.getAndDelete?.('verification:otp');
+      await storage.set('verification:otp', 'code', 300);
+      const consumed = await storage.getAndDelete('verification:otp');
       expect(consumed).toBe('code');
       expect(mockKv.deletes).toContain('verification:otp');
-      expect(await auth.options.secondaryStorage?.get('verification:otp')).toBeNull();
+      expect(await storage.get('verification:otp')).toBeNull();
 
-      const missing = await auth.options.secondaryStorage?.getAndDelete?.('verification:missing');
+      const missing = await storage.getAndDelete('verification:missing');
       expect(missing).toBeNull();
       expect(mockKv.deletes).not.toContain('verification:missing');
     });
 
     it('implements increment on secondaryStorage for distributed rate limiting', async () => {
       const mockKv = new FakeKV();
-      const auth = createAuthInstance(validEnv, { kv: mockKv });
+      const auth = createAuth(buildEnv(), { kv: mockKv });
+      const storage = secondaryStorageOf(auth);
 
-      expect(typeof auth.options.secondaryStorage?.increment).toBe('function');
+      expect(typeof storage.increment).toBe('function');
 
-      const count1 = await auth.options.secondaryStorage?.increment?.('test-limit-key', 60);
+      const count1 = await storage.increment('test-limit-key', 60);
       expect(count1).toBe(1);
 
-      const count2 = await auth.options.secondaryStorage?.increment?.('test-limit-key', 60);
+      const count2 = await storage.increment('test-limit-key', 60);
       expect(count2).toBe(2);
+    });
+  });
+
+  describe('KV is required', () => {
+    it('throws a clear error naming kv when neither options.kv nor env.AUTH_KV is set', () => {
+      const env = buildEnv({ AUTH_KV: undefined as unknown as KVNamespace });
+      expect(() => createAuth(env, {})).toThrow(/kv is required.*options\.kv.*env\.AUTH_KV/s);
+    });
+
+    it('reports the missing kv alongside the other missing bindings in one error', () => {
+      const env = buildEnv({
+        AUTH_KV: undefined as unknown as KVNamespace,
+        DB: undefined,
+      });
+      expect(() => createAuth(env, {})).toThrow(/database is required[\s\S]*kv is required/);
+    });
+
+    it('accepts a consumer-supplied secondaryStorage in place of kv', () => {
+      const env = buildEnv({ AUTH_KV: undefined as unknown as KVNamespace });
+      expect(() => createAuth(env, { secondaryStorage: new FakeKV() as never })).not.toThrow();
     });
   });
 
   describe('Cookie caching by default', () => {
     it('enables cookie caching by default in Better Auth session options', () => {
-      const mockKv = new FakeKV();
-      const auth = createAuthInstance(validEnv, { kv: mockKv });
+      const auth = createAuth(buildEnv(), { kv: new FakeKV() });
       expect(auth.options.session?.cookieCache?.enabled).toBe(true);
     });
 
     it('allows cookie caching to be explicitly disabled or customized in options', () => {
-      const mockKv = new FakeKV();
-      const auth = createAuthInstance(validEnv, {
-        kv: mockKv,
+      const auth = createAuth(buildEnv(), {
+        kv: new FakeKV(),
         betterAuth: { session: { cookieCache: { enabled: false } } },
       });
       expect(auth.options.session?.cookieCache?.enabled).toBe(false);
@@ -192,9 +118,50 @@ describe('KV secondary storage for session cache and rate limiter', () => {
 
   describe('Rate limiter configured with secondary storage across isolates', () => {
     it('configures the rate limiter to use secondary storage when KV is provided', () => {
-      const mockKv = new FakeKV();
-      const auth = createAuthInstance(validEnv, { kv: mockKv });
+      const auth = createAuth(buildEnv(), { kv: new FakeKV() });
       expect(auth.options.rateLimit?.storage).toBe('secondary-storage');
+    });
+
+    // Two envs stand in for two isolates. The counter lives in our KV
+    // `increment` (Better Auth calls it to consume a request), so a second
+    // instance on the same namespace continues the first one's count.
+    it('shares rate-limit counters across two createAuth instances on one KV namespace', async () => {
+      const sharedKv = new FakeKV();
+      const clientIp = '198.51.100.42';
+      const rateLimit = { enabled: true, window: 60, max: 2 };
+      const request = () =>
+        new Request(`${VALID_BASE_URL}/api/auth/ok`, { headers: { 'x-forwarded-for': clientIp } });
+
+      const auth1 = createAuth(buildEnv(), { kv: sharedKv, rateLimit });
+      const auth2 = createAuth(buildEnv(), { kv: sharedKv, rateLimit });
+      expect(auth1).not.toBe(auth2);
+
+      const first = await auth1.handler(request());
+      const second = await auth1.handler(request());
+      const third = await auth2.handler(request());
+
+      expect([first.status, second.status, third.status]).toEqual([200, 200, 429]);
+      const counters = sharedKv.store
+        .values()
+        .filter((value) => value === '3')
+        .toArray();
+      expect(counters).toHaveLength(1);
+    });
+
+    it('does not share counters between instances on different KV namespaces', async () => {
+      const clientIp = '198.51.100.43';
+      const rateLimit = { enabled: true, window: 60, max: 2 };
+      const request = () =>
+        new Request(`${VALID_BASE_URL}/api/auth/ok`, { headers: { 'x-forwarded-for': clientIp } });
+
+      const auth1 = createAuth(buildEnv(), { kv: new FakeKV(), rateLimit });
+      const auth2 = createAuth(buildEnv(), { kv: new FakeKV(), rateLimit });
+
+      const first = await auth1.handler(request());
+      const second = await auth1.handler(request());
+      const third = await auth2.handler(request());
+
+      expect([first.status, second.status, third.status]).toEqual([200, 200, 200]);
     });
   });
 });

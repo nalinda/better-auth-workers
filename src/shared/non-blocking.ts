@@ -1,5 +1,14 @@
 import type { ExecutionContext } from '../types';
 
+// The fallback ExecutionContext for an instance (`options.ctx`). It is a
+// mutable holder rather than a captured value because the D1 path memoises
+// the instance: every later `createAuth` call refreshes `current`, so the
+// fallback tracks the latest request instead of the one that built the
+// instance. The context passed to `auth.handler(request, ctx)` always wins.
+export interface ContextRef {
+  current?: ExecutionContext;
+}
+
 const requestContextMap = new WeakMap<Request, ExecutionContext>();
 
 function setRequestContext(request: Request, ctx: ExecutionContext): void {
@@ -8,13 +17,13 @@ function setRequestContext(request: Request, ctx: ExecutionContext): void {
 
 export function getExecutionContext(
   request?: Request,
-  optionsCtx?: ExecutionContext
+  fallback?: ExecutionContext
 ): ExecutionContext | undefined {
   if (request) {
     const ctx = requestContextMap.get(request);
     if (ctx) return ctx;
   }
-  return optionsCtx;
+  return fallback;
 }
 
 export function runNonBlocking(
@@ -43,13 +52,16 @@ interface HandlerHost {
   handler: (request: Request, ctx?: ExecutionContext) => Promise<Response>;
 }
 
-export function withHandlerContext(instance: HandlerHost, optionsCtx?: ExecutionContext): void {
+// Records the per-request ExecutionContext against the Request so plugin
+// callbacks (sendOTP, sendMagicLink) can schedule work on the context of
+// the request they are serving.
+export function withHandlerContext(instance: HandlerHost, ctxRef: ContextRef): void {
   const originalHandler = instance.handler.bind(instance);
   instance.handler = async (request: Request, ctx?: ExecutionContext) => {
-    const activeCtx = ctx ?? optionsCtx;
+    const activeCtx = ctx ?? ctxRef.current;
     if (activeCtx) {
       setRequestContext(request, activeCtx);
     }
-    return originalHandler(request, ctx);
+    return originalHandler(request);
   };
 }

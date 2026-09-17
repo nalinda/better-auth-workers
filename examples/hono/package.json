@@ -7,7 +7,9 @@
     "dev": "wrangler dev --env d1",
     "dev:d1": "wrangler dev --env d1",
     "dev:hyperdrive": "wrangler dev --env hyperdrive",
-    "dev:postgres": "wrangler dev --env hyperdrive"
+    "dev:postgres": "wrangler dev --env hyperdrive",
+    "dev:api": "wrangler dev -c api.wrangler.jsonc --env d1 --port 8788",
+    "dev:api:hyperdrive": "wrangler dev -c api.wrangler.jsonc --env hyperdrive --port 8788"
   },
   "dependencies": {
     "better-auth": "^1.7.0",

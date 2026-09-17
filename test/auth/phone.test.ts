@@ -1,91 +1,13 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 
-import { createAuth } from '../../src/index';
-
-function createMockD1() {
-  return {
-    prepare: mock(() => ({
-      bind: mock(() => ({
-        all: mock(() => Promise.resolve({ results: [], meta: { changes: 0 } })),
-        first: mock(() => Promise.resolve(null)),
-        run: mock(() => Promise.resolve({ success: true, meta: { changes: 0 } })),
-      })),
-    })),
-    batch: mock(() => Promise.resolve([])),
-    exec: mock(() => Promise.resolve({ count: 0, duration: 0 })),
-  };
-}
-
-function createMockExecutionContext() {
-  const promises: Promise<unknown>[] = [];
-  return {
-    ctx: {
-      waitUntil: mock((promise: Promise<unknown>) => {
-        promises.push(promise);
-      }),
-      passThroughOnException: mock(() => {}),
-    },
-    promises,
-  };
-}
-
-interface CreateAuthOptions {
-  basePath?: string;
-  baseURL?: string;
-  secret?: string;
-  database?: unknown;
-  ctx?: {
-    waitUntil: (promise: Promise<unknown>) => void;
-    passThroughOnException?: () => void;
-  };
-  phone?: {
-    sendOTP: (
-      args: { phoneNumber: string; code: string },
-      request?: Request
-    ) => Promise<void> | void;
-    otpLength?: number;
-    expiresIn?: number;
-    allowedAttempts?: number;
-    signUpOnVerification?: { getTempEmail: (phoneNumber: string) => string };
-  };
-  [key: string]: unknown;
-}
-
-interface AuthInstanceLike {
-  handler: (
-    req: Request,
-    ctx?: { waitUntil: (promise: Promise<unknown>) => void }
-  ) => Promise<Response>;
-  options?: {
-    plugins?: Array<{
-      id: string;
-      options?: Record<string, unknown>;
-      [key: string]: unknown;
-    }>;
-    [key: string]: unknown;
-  };
-  [key: string]: unknown;
-}
-
-const createAuthInstance = (
-  env: Record<string, unknown>,
-  options?: CreateAuthOptions
-): AuthInstanceLike =>
-  (
-    createAuth as unknown as (e: Record<string, unknown>, o?: CreateAuthOptions) => AuthInstanceLike
-  )(env, options);
+import { type AuthEnv, createAuth } from '../../src/index';
+import { buildEnv, createMockExecutionContext } from '../helpers/auth';
 
 describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
-  const validSecret = 'test-secret-at-least-32-chars-long-1234567890';
-  const validBaseUrl = 'https://auth.example.com';
-  let validEnv: Record<string, unknown>;
+  let validEnv: AuthEnv;
 
   beforeEach(() => {
-    validEnv = {
-      AUTH_BASE_URL: validBaseUrl,
-      BETTER_AUTH_SECRET: validSecret,
-      DB: createMockD1(),
-    };
+    validEnv = buildEnv();
   });
 
   describe('Asynchronous delivery under waitUntil', () => {
@@ -97,8 +19,8 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
         isSendOTPDone = true;
       });
 
-      const { ctx, promises } = createMockExecutionContext();
-      const auth = createAuthInstance(validEnv, {
+      const { ctx, waitUntil, promises } = createMockExecutionContext();
+      const auth = createAuth(validEnv, {
         ctx,
         phone: { sendOTP },
       });
@@ -125,7 +47,7 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
         expect(isHandlerCompleted).toBe(true);
         expect(response?.status).toBe(200);
         expect(isSendOTPDone).toBe(false);
-        expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
+        expect(waitUntil).toHaveBeenCalledTimes(1);
 
         resolveSlowSend();
         await Promise.all(promises);
@@ -145,7 +67,7 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
       });
 
       const { ctx, promises } = createMockExecutionContext();
-      const auth = createAuthInstance(validEnv, {
+      const auth = createAuth(validEnv, {
         ctx,
         phone: { sendOTP },
       });
@@ -191,8 +113,8 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
         sentCode = code;
       });
 
-      const { ctx, promises } = createMockExecutionContext();
-      const auth = createAuthInstance(validEnv, {
+      const { ctx, waitUntil, promises } = createMockExecutionContext();
+      const auth = createAuth(validEnv, {
         ctx,
         phone: { sendOTP },
       });
@@ -221,7 +143,7 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
 
         const res = await auth.handler(req, ctx);
         expect(res.status).toBe(200);
-        expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
+        expect(waitUntil).toHaveBeenCalledTimes(1);
 
         try {
           await Promise.all(promises);
@@ -247,7 +169,7 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
     it('rejects an invalid phone number before sendOTP is invoked', async () => {
       const sendOTP = mock(() => {});
       const { ctx } = createMockExecutionContext();
-      const auth = createAuthInstance(validEnv, {
+      const auth = createAuth(validEnv, {
         ctx,
         phone: { sendOTP },
       });
@@ -277,18 +199,18 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
 
   describe('Option defaults and passthrough', () => {
     it('applies default otpLength, expiresIn, and allowedAttempts to phone plugin options and allows overrides', () => {
-      const auth = createAuthInstance(validEnv, {
+      const auth = createAuth(validEnv, {
         phone: {
           sendOTP: async () => {},
         },
       });
 
-      const phonePlugin = auth.options?.plugins?.find((p) => p.id === 'phone-number');
+      const phonePlugin = auth.options.plugins?.find((p) => p.id === 'phone-number');
       expect(phonePlugin?.options?.otpLength).toBe(6);
       expect(phonePlugin?.options?.expiresIn).toBe(300);
       expect(phonePlugin?.options?.allowedAttempts).toBe(3);
 
-      const customAuth = createAuthInstance(validEnv, {
+      const customAuth = createAuth(validEnv, {
         phone: {
           sendOTP: async () => {},
           otpLength: 8,
@@ -297,33 +219,33 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
         },
       });
 
-      const customPlugin = customAuth.options?.plugins?.find((p) => p.id === 'phone-number');
+      const customPlugin = customAuth.options.plugins?.find((p) => p.id === 'phone-number');
       expect(customPlugin?.options?.otpLength).toBe(8);
       expect(customPlugin?.options?.expiresIn).toBe(600);
       expect(customPlugin?.options?.allowedAttempts).toBe(5);
     });
 
     it('signs up an unknown phone number on first verification with a placeholder email, overridable', () => {
-      const auth = createAuthInstance(validEnv, {
+      const auth = createAuth(validEnv, {
         phone: {
           sendOTP: async () => {},
         },
       });
 
-      const phonePlugin = auth.options?.plugins?.find((p) => p.id === 'phone-number');
+      const phonePlugin = auth.options.plugins?.find((p) => p.id === 'phone-number');
       const signUp = phonePlugin?.options?.signUpOnVerification as
         { getTempEmail: (phoneNumber: string) => string } | undefined;
       expect(signUp).toBeDefined();
       expect(signUp?.getTempEmail('+15551234567')).toBe('+15551234567@phone.invalid');
 
-      const customAuth = createAuthInstance(validEnv, {
+      const customAuth = createAuth(validEnv, {
         phone: {
           sendOTP: async () => {},
           signUpOnVerification: { getTempEmail: (phoneNumber) => `${phoneNumber}@example.com` },
         },
       });
-      const customSignUp = customAuth.options?.plugins?.find((p) => p.id === 'phone-number')
-        ?.options?.signUpOnVerification as { getTempEmail: (phoneNumber: string) => string };
+      const customSignUp = customAuth.options.plugins?.find((p) => p.id === 'phone-number')?.options
+        ?.signUpOnVerification as { getTempEmail: (phoneNumber: string) => string };
       expect(customSignUp.getTempEmail('+15551234567')).toBe('+15551234567@example.com');
     });
   });

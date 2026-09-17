@@ -27,6 +27,18 @@ interface WranglerConfig extends WranglerEnvConfig {
   env?: Record<string, WranglerEnvConfig>;
 }
 
+interface ApiWranglerEnvConfig {
+  kv_namespaces?: Array<{ binding: string; id?: string }>;
+  services?: Array<{ binding: string; service: string }>;
+}
+
+interface ApiWranglerConfig {
+  name?: string;
+  main?: string;
+  compatibility_flags?: string[];
+  env?: Record<string, ApiWranglerEnvConfig>;
+}
+
 interface TsConfig {
   compilerOptions?: {
     strict?: boolean;
@@ -97,21 +109,55 @@ function readJsonFile<T>(relativePath: string): T | undefined {
   return JSON.parse(sanitized) as T;
 }
 
-function readFileText(relativePath: string): string | undefined {
-  const filePath = path.resolve(exampleDir, relativePath);
-  // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path
-  if (!fs.existsSync(filePath)) return undefined;
-  // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path
-  return fs.readFileSync(filePath, 'utf8');
+const authWorkerPath = path.resolve(exampleDir, 'src/index.ts');
+const apiWorkerPath = path.resolve(exampleDir, 'src/api.ts');
+
+function stubAuthEnv(overrides: Record<string, unknown> = {}) {
+  return {
+    AUTH_BASE_URL: 'http://localhost',
+    BETTER_AUTH_SECRET: 'test-secret-at-least-32-chars-long-1234567890',
+    DB: createMockD1(),
+    AUTH_KV: new FakeKV(),
+    ...overrides,
+  };
 }
 
-function getSecondWorkerPath(): string | undefined {
-  const candidates = [
-    path.resolve(exampleDir, 'src/api.ts'),
-    path.resolve(exampleDir, 'src/consumer.ts'),
-  ];
-  // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path
-  return candidates.find((p) => fs.existsSync(p));
+function stubCtx() {
+  const promises: Promise<unknown>[] = [];
+  return {
+    ctx: {
+      waitUntil: (promise: Promise<unknown>) => {
+        promises.push(promise);
+      },
+      passThroughOnException: () => {},
+    },
+    promises,
+  };
+}
+
+function postJson(url: string, body: Record<string, unknown>): Request {
+  return new Request(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+const signIn = () =>
+  postJson('http://localhost/auth/sign-in/social', { provider: 'google', callbackURL: '/' });
+
+async function withCapturedLogs(run: () => Promise<void>): Promise<string[]> {
+  const captured: string[] = [];
+  const original = console.log;
+  console.log = (...args: unknown[]) => {
+    captured.push(args.map(String).join(' '));
+  };
+  try {
+    await run();
+  } finally {
+    console.log = original;
+  }
+  return captured;
 }
 
 describe('Example package scaffolding and configuration', () => {
@@ -200,122 +246,119 @@ describe('Example TypeScript typechecking', () => {
 });
 
 describe('Hono auth Worker implementation', () => {
-  it('examples/hono/src/index.ts exists and exports a Hono application', () => {
-    const authSource = readFileText('src/index.ts');
-    expect(authSource).toBeDefined();
-    expect(authSource).toMatch(/new Hono/);
-    expect(authSource).toMatch(/export default/);
-  });
-
-  it('auth Worker serves /auth/* using createAuth', () => {
-    const authSource = readFileText('src/index.ts');
-    expect(authSource).toBeDefined();
-    expect(authSource).toMatch(/\/auth/);
-    expect(authSource).toContain('createAuth');
-  });
-
-  it('auth Worker enables phone OTP with console-logging sendOTP marked not for production', () => {
-    const authSource = readFileText('src/index.ts');
-    expect(authSource).toBeDefined();
-    expect(authSource).toMatch(/phone\s*:/);
-    expect(authSource).toMatch(/sendOTP/);
-    expect(authSource).toMatch(/console\.log/);
-    expect(authSource).toMatch(
-      /not (for|safe for) production|do not (use|ship) in production|local( use)? only/i
-    );
-  });
-
-  it('auth Worker enables Google sign-in and bearer plugin', () => {
-    const authSource = readFileText('src/index.ts');
-    expect(authSource).toBeDefined();
-    expect(authSource).toMatch(/google\s*:/);
-    expect(authSource).toMatch(/bearer\s*:\s*true/);
-  });
-
-  it('auth Worker fetch handler responds without throwing when constructed with stub bindings', async () => {
-    const indexPath = path.resolve(exampleDir, 'src/index.ts');
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path
-    const hasWorkerSource = fs.existsSync(indexPath);
-    expect(hasWorkerSource).toBe(true);
-    if (!hasWorkerSource) return;
-
-    const appModule = (await import(indexPath)) as WorkerModule;
-    const app = appModule.default;
+  it('serves Better Auth under /auth/* through createAuth', async () => {
+    const { default: app } = (await import(authWorkerPath)) as WorkerModule;
     expect(typeof app.fetch).toBe('function');
 
-    const stubEnv = {
-      AUTH_BASE_URL: 'http://localhost',
-      BETTER_AUTH_SECRET: 'test-secret-at-least-32-chars-long-1234567890',
-      DB: createMockD1(),
-      AUTH_KV: new FakeKV(),
-    };
-    const stubCtx = {
-      waitUntil: () => {},
-      passThroughOnException: () => {},
-    };
+    const res = await app.fetch(
+      new Request('http://localhost/auth/ok'),
+      stubAuthEnv(),
+      stubCtx().ctx
+    );
 
-    const req = new Request('http://localhost/auth/ok');
-    const res = await app.fetch(req, stubEnv, stubCtx);
-    expect(res).toBeInstanceOf(Response);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
+  it('delivers a phone OTP by logging it, marked for local use only, under the request’s waitUntil', async () => {
+    const { default: app } = (await import(authWorkerPath)) as WorkerModule;
+    const { ctx, promises } = stubCtx();
+
+    const logs = await withCapturedLogs(async () => {
+      const res = await app.fetch(
+        postJson('http://localhost/auth/phone-number/send-otp', { phoneNumber: '+15551234567' }),
+        stubAuthEnv(),
+        ctx
+      );
+      expect(res.status).toBe(200);
+      await Promise.all(promises);
+    });
+
+    expect(promises).toHaveLength(1);
+    const otpLine = logs.find((line) => /OTP for \+15551234567: \d{6}/.test(line));
+    expect(otpLine).toBeDefined();
+    expect(otpLine).toMatch(/local use only - not for production/);
+  });
+
+  it('delivers a magic link by logging it, marked for local use only, under the request’s waitUntil', async () => {
+    const { default: app } = (await import(authWorkerPath)) as WorkerModule;
+    const { ctx, promises } = stubCtx();
+
+    const logs = await withCapturedLogs(async () => {
+      const res = await app.fetch(
+        postJson('http://localhost/auth/sign-in/magic-link', { email: 'someone@example.com' }),
+        stubAuthEnv(),
+        ctx
+      );
+      expect(res.status).toBe(200);
+      await Promise.all(promises);
+    });
+
+    expect(promises).toHaveLength(1);
+    const linkLine = logs.find((line) => line.includes('Magic link for someone@example.com'));
+    expect(linkLine).toBeDefined();
+    expect(linkLine).toMatch(/local use only - not for production/);
+    expect(linkLine).toMatch(/http:\/\/localhost\/auth\/magic-link\/verify\?token=/);
+  });
+
+  it('enables Google sign-in only when the Google secrets are bound', async () => {
+    const { default: app } = (await import(authWorkerPath)) as WorkerModule;
+
+    const withoutSecrets = await app.fetch(signIn(), stubAuthEnv(), stubCtx().ctx);
+    expect(withoutSecrets.status).toBe(403);
+
+    const withSecrets = await app.fetch(
+      signIn(),
+      stubAuthEnv({ GOOGLE_CLIENT_ID: 'client-id', GOOGLE_CLIENT_SECRET: 'client-secret' }),
+      stubCtx().ctx
+    );
+    expect(withSecrets.status).not.toBe(403);
+    expect(withSecrets.status).not.toBe(404);
   });
 });
 
-describe('Second minimal Worker with service binding and session validation', () => {
-  it('second Worker exists demonstrating createSessionClient and requireSession', () => {
-    const secondWorkerPath = getSecondWorkerPath();
-    expect(secondWorkerPath).toBeDefined();
-    if (!secondWorkerPath) return;
+describe('Second Worker with service binding and session validation', () => {
+  it('has its own wrangler config binding the auth Worker as a service and sharing its KV namespace', () => {
+    const config = readJsonFile<ApiWranglerConfig>('api.wrangler.jsonc');
+    expect(config).toBeDefined();
+    expect(config?.main).toBe('src/api.ts');
+    expect(config?.compatibility_flags).toContain('nodejs_compat');
 
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path
-    const source = fs.readFileSync(secondWorkerPath, 'utf8');
-    expect(source).toContain('createSessionClient');
-    expect(source).toContain('requireSession');
+    const authConfig = readJsonFile<WranglerConfig>('wrangler.jsonc');
+    const authEnvs = new Map(Object.entries(authConfig?.env ?? {}));
+    const apiEnvs = Object.entries(config?.env ?? {});
+    expect(apiEnvs.map(([name]) => name)).toEqual(['d1', 'hyperdrive']);
+    for (const [envName, env] of apiEnvs) {
+      expect(env.services).toEqual([
+        { binding: 'AUTH', service: `${authConfig?.name}-${envName}` },
+      ]);
+      const authKv = authEnvs.get(envName)?.kv_namespaces?.find((kv) => kv.binding === 'AUTH_KV');
+      expect(env.kv_namespaces).toEqual([{ binding: 'AUTH_KV', id: authKv?.id }]);
+    }
   });
 
-  it('second Worker defines protected route with session middleware over service binding', () => {
-    const secondWorkerPath = getSecondWorkerPath();
-    expect(secondWorkerPath).toBeDefined();
-    if (!secondWorkerPath) return;
-
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path
-    const source = fs.readFileSync(secondWorkerPath, 'utf8');
-    expect(source).toMatch(/service|AUTH/i);
-    expect(source).toMatch(/requireSession\s*\(/);
+  it('has dev scripts for running the API Worker against each backend', () => {
+    const pkg = readJsonFile<PackageJson>('package.json');
+    expect(pkg?.scripts?.['dev:api']).toMatch(/api\.wrangler\.jsonc/);
+    expect(pkg?.scripts?.['dev:api']).toMatch(/--env d1/);
+    expect(pkg?.scripts?.['dev:api:hyperdrive']).toMatch(/--env hyperdrive/);
   });
 
-  it('second Worker rejects unauthenticated requests with 401 over service binding', async () => {
-    const secondWorkerPath = getSecondWorkerPath();
-    expect(secondWorkerPath).toBeDefined();
-    if (!secondWorkerPath) return;
-
-    const mod = (await import(secondWorkerPath)) as WorkerModule;
-    const app = mod.default;
+  it('rejects unauthenticated requests with 401 over service binding', async () => {
+    const { default: app } = (await import(apiWorkerPath)) as WorkerModule;
     expect(typeof app.fetch).toBe('function');
 
     const stubEnv = {
-      AUTH: {
-        fetch: () => Promise.resolve(Response.json(null)),
-      },
+      AUTH: { fetch: () => Promise.resolve(Response.json(null)) },
       AUTH_KV: new FakeKV(),
     };
-    const stubCtx = {
-      waitUntil: () => {},
-      passThroughOnException: () => {},
-    };
 
-    const req = new Request('http://localhost/me');
-    const res = await app.fetch(req, stubEnv, stubCtx);
+    const res = await app.fetch(new Request('http://localhost/me'), stubEnv, stubCtx().ctx);
     expect(res.status).toBe(401);
   });
 
-  it('second Worker accepts authenticated requests with valid session over service binding', async () => {
-    const secondWorkerPath = getSecondWorkerPath();
-    expect(secondWorkerPath).toBeDefined();
-    if (!secondWorkerPath) return;
-
-    const mod = (await import(secondWorkerPath)) as WorkerModule;
-    const app = mod.default;
-    expect(typeof app.fetch).toBe('function');
+  it('accepts authenticated requests with a valid session over service binding', async () => {
+    const { default: app } = (await import(apiWorkerPath)) as WorkerModule;
 
     const mockSession = {
       session: {
@@ -324,27 +367,27 @@ describe('Second minimal Worker with service binding and session validation', ()
         userId: 'user-1',
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
       },
-      user: {
-        id: 'user-1',
-        email: 'user@example.com',
-      },
+      user: { id: 'user-1', email: 'user@example.com' },
     };
-
+    const authCalls: string[] = [];
     const stubEnv = {
       AUTH: {
-        fetch: () => Promise.resolve(Response.json(mockSession)),
+        fetch: (input: Request | string | URL) => {
+          authCalls.push(input instanceof Request ? input.url : String(input));
+          return Promise.resolve(Response.json(mockSession));
+        },
       },
       AUTH_KV: new FakeKV(),
-    };
-    const stubCtx = {
-      waitUntil: () => {},
-      passThroughOnException: () => {},
     };
 
     const req = new Request('http://localhost/me', {
       headers: { cookie: 'better-auth.session_token=tok-1' },
     });
-    const res = await app.fetch(req, stubEnv, stubCtx);
+    const res = await app.fetch(req, stubEnv, stubCtx().ctx);
+
     expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(mockSession.user);
+    // The client fetches get-session under the auth Worker's basePath.
+    expect(authCalls).toEqual(['https://auth.internal/auth/get-session']);
   });
 });

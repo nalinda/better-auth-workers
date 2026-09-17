@@ -1,6 +1,7 @@
 import type { AuthEnv } from '../types';
 import { databaseProblem } from './database';
 import { resolveBaseURL, resolveSecret } from './env';
+import { kvProblem } from './kv';
 import { googleCredentialProblems } from './plugins/google';
 import type { CreateAuthOptions } from './types';
 
@@ -15,6 +16,8 @@ function collectConfigProblems(options?: CreateAuthOptions, env?: Partial<AuthEn
   }
   const dbProblem = databaseProblem(options, env);
   if (dbProblem) problems.push(dbProblem);
+  const kvMissing = kvProblem(options, env);
+  if (kvMissing) problems.push(kvMissing);
   problems.push(...googleCredentialProblems(options, env));
 
   return problems;

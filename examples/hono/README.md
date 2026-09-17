@@ -4,12 +4,12 @@ This example demonstrates how to use `better-auth-workers` with [Hono](https://h
 
 ## Features
 
-- **Auth Worker (`src/index.ts`)**: Serves `/auth/*` with Phone OTP, Google OAuth, and Bearer token authentication.
-- **API Worker (`src/api.ts`)**: A second Worker demonstrating `createSessionClient` and `requireSession` middleware over a Cloudflare service binding.
+- **Auth Worker (`src/index.ts`, `wrangler.jsonc`)**: Serves `/auth/*` with Phone OTP, magic-link, Google OAuth, and Bearer token authentication.
+- **API Worker (`src/api.ts`, `api.wrangler.jsonc`)**: A second Worker demonstrating `createSessionClient` and `requireSession` middleware over a Cloudflare service binding to the auth Worker.
 - **Two database environments**:
   - `d1`: SQLite backed by Cloudflare D1.
   - `hyperdrive`: Postgres backed through Cloudflare Hyperdrive.
-- **Local OTP delivery**: Console-logging `sendOTP` for local testing (clearly marked not for production use).
+- **Local delivery**: Console-logging `sendOTP` and `sendMagicLink` for local testing (clearly marked not for production use).
 
 ## Quick Start
 
@@ -57,6 +57,26 @@ Then start the dev server:
 bun run dev:hyperdrive
 ```
 
+### 4. Run both Workers together
+
+The API Worker has its own config, `api.wrangler.jsonc`. Its `AUTH` service binding targets the auth Worker by its environment-specific name (`example-hono-d1` or `example-hono-hyperdrive`), and its `AUTH_KV` namespace is the auth Worker's, so a sign-out on the auth Worker is visible to the API Worker's session cache on the next request.
+
+Run each Worker in its own terminal; `wrangler dev` sessions on one machine find each other through the local dev registry, so the service binding resolves across the two processes:
+
+```sh
+# terminal 1, from within examples/hono: the auth Worker on :8787
+bun run dev:d1            # or dev:hyperdrive
+
+# terminal 2, from within examples/hono: the API Worker on :8788
+bun run dev:api           # or dev:api:hyperdrive
+```
+
+Sign in through `http://localhost:8787/auth/*` (see below), then call `http://localhost:8788/me` with the session cookie, or with the `Authorization: Bearer <token>` header from the sign-in response:
+
+```sh
+curl http://localhost:8788/me -H "Authorization: Bearer <token>"
+```
+
 ## Testing Phone OTP Locally
 
 When requesting an OTP via `/auth/phone-number/send-otp`:
@@ -72,3 +92,21 @@ The 6-digit OTP code will be printed to your terminal console:
 ```
 [local use only - not for production] OTP for +1234567890: 123456
 ```
+
+## Testing Magic Link Locally
+
+Request a link via `/auth/sign-in/magic-link`:
+
+```sh
+curl -X POST http://localhost:8787/auth/sign-in/magic-link \
+  -H "Content-Type: application/json" \
+  -d '{"email": "someone@example.com", "callbackURL": "/"}'
+```
+
+The link is printed to your terminal console instead of being emailed:
+
+```
+[local use only - not for production] Magic link for someone@example.com: http://localhost:8787/auth/magic-link/verify?token=...&callbackURL=/
+```
+
+Opening it (or `curl -i` on it) verifies the token, creates the user on first sign-in, and sets the session cookie.

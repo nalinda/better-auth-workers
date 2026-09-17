@@ -1,105 +1,29 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 
-import { createAuth } from '../../src/index';
-
-function createMockD1() {
-  return {
-    prepare: mock(() => ({
-      bind: mock(() => ({
-        all: mock(() => Promise.resolve({ results: [], meta: { changes: 0 } })),
-        first: mock(() => Promise.resolve(null)),
-        run: mock(() => Promise.resolve({ success: true, meta: { changes: 0 } })),
-      })),
-    })),
-    batch: mock(() => Promise.resolve([])),
-    exec: mock(() => Promise.resolve({ count: 0, duration: 0 })),
-  };
-}
-
-function createMockExecutionContext() {
-  const promises: Promise<unknown>[] = [];
-  return {
-    ctx: {
-      waitUntil: mock((promise: Promise<unknown>) => {
-        promises.push(promise);
-      }),
-      passThroughOnException: mock(() => {}),
-    },
-    promises,
-  };
-}
-
-interface CreateAuthOptions {
-  basePath?: string;
-  baseURL?: string;
-  secret?: string;
-  database?: unknown;
-  ctx?: {
-    waitUntil: (promise: Promise<unknown>) => void;
-    passThroughOnException?: () => void;
-  };
-  magicLink?: {
-    sendMagicLink: (
-      args: { email: string; url: string; token: string },
-      request?: Request
-    ) => Promise<void> | void;
-    expiresIn?: number;
-    disableSignUp?: boolean;
-  };
-  [key: string]: unknown;
-}
-
-interface AuthInstanceLike {
-  handler: (
-    req: Request,
-    ctx?: { waitUntil: (promise: Promise<unknown>) => void }
-  ) => Promise<Response>;
-  options?: {
-    plugins?: Array<{
-      id: string;
-      options?: Record<string, unknown>;
-      [key: string]: unknown;
-    }>;
-    [key: string]: unknown;
-  };
-  [key: string]: unknown;
-}
-
-const createAuthInstance = (
-  env: Record<string, unknown>,
-  options?: CreateAuthOptions
-): AuthInstanceLike =>
-  (
-    createAuth as unknown as (e: Record<string, unknown>, o?: CreateAuthOptions) => AuthInstanceLike
-  )(env, options);
+import { type AuthEnv, createAuth } from '../../src/index';
+import { buildEnv, createMockExecutionContext } from '../helpers/auth';
 
 describe('Magic link sign-in with user-supplied sendMagicLink under waitUntil', () => {
-  const validSecret = 'test-secret-at-least-32-chars-long-1234567890';
-  const validBaseUrl = 'https://auth.example.com';
-  let validEnv: Record<string, unknown>;
+  let validEnv: AuthEnv;
 
   beforeEach(() => {
-    validEnv = {
-      AUTH_BASE_URL: validBaseUrl,
-      BETTER_AUTH_SECRET: validSecret,
-      DB: createMockD1(),
-    };
+    validEnv = buildEnv();
   });
 
   describe('Plugin wiring', () => {
     it('configures the magic-link plugin when magicLink options are supplied', () => {
-      const auth = createAuthInstance(validEnv, {
+      const auth = createAuth(validEnv, {
         magicLink: { sendMagicLink: async () => {} },
       });
 
-      const magicLinkPlugin = auth.options?.plugins?.find((p) => p.id === 'magic-link');
+      const magicLinkPlugin = auth.options.plugins?.find((p) => p.id === 'magic-link');
       expect(magicLinkPlugin).toBeDefined();
     });
 
     it('does not configure the magic-link plugin when magicLink options are absent', () => {
-      const auth = createAuthInstance(validEnv, {});
+      const auth = createAuth(validEnv, {});
 
-      const magicLinkPlugin = auth.options?.plugins?.find((p) => p.id === 'magic-link');
+      const magicLinkPlugin = auth.options.plugins?.find((p) => p.id === 'magic-link');
       expect(magicLinkPlugin).toBeUndefined();
     });
   });
@@ -113,8 +37,8 @@ describe('Magic link sign-in with user-supplied sendMagicLink under waitUntil', 
         isSendDone = true;
       });
 
-      const { ctx, promises } = createMockExecutionContext();
-      const auth = createAuthInstance(validEnv, {
+      const { ctx, waitUntil, promises } = createMockExecutionContext();
+      const auth = createAuth(validEnv, {
         ctx,
         magicLink: { sendMagicLink },
       });
@@ -141,7 +65,7 @@ describe('Magic link sign-in with user-supplied sendMagicLink under waitUntil', 
         expect(isHandlerCompleted).toBe(true);
         expect(response?.status).toBe(200);
         expect(isSendDone).toBe(false);
-        expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
+        expect(waitUntil).toHaveBeenCalledTimes(1);
 
         resolveSlowSend();
         await Promise.all(promises);
@@ -161,7 +85,7 @@ describe('Magic link sign-in with user-supplied sendMagicLink under waitUntil', 
       });
 
       const { ctx, promises } = createMockExecutionContext();
-      const auth = createAuthInstance(validEnv, {
+      const auth = createAuth(validEnv, {
         ctx,
         magicLink: { sendMagicLink },
       });

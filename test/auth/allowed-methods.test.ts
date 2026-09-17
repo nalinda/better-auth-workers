@@ -1,75 +1,10 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { beforeEach, describe, expect, it } from 'bun:test';
 
 import { createAuth } from '../../src/index';
-
-function createMockD1() {
-  return {
-    prepare: mock(() => ({
-      bind: mock(() => ({
-        all: mock(() => Promise.resolve({ results: [], meta: { changes: 0 } })),
-        first: mock(() => Promise.resolve(null)),
-        run: mock(() => Promise.resolve({ success: true, meta: { changes: 0 } })),
-      })),
-    })),
-    batch: mock(() => Promise.resolve([])),
-    exec: mock(() => Promise.resolve({ count: 0, duration: 0 })),
-  };
-}
-
-interface CreateAuthOptions {
-  basePath?: string;
-  baseURL?: string;
-  secret?: string;
-  database?: unknown;
-  google?: boolean | { clientId: string; clientSecret: string };
-  phone?: {
-    sendOTP: (
-      args: { phoneNumber: string; code: string },
-      request?: Request
-    ) => Promise<void> | void;
-  };
-  magicLink?: {
-    sendMagicLink: (
-      args: { email: string; url: string; token: string },
-      request?: Request
-    ) => Promise<void> | void;
-  };
-  allowedMethods?: Array<'phone' | 'google' | 'magic-link'>;
-  betterAuth?: {
-    hooks?: {
-      before?: (ctx: unknown) => Promise<unknown>;
-    };
-    [key: string]: unknown;
-  };
-  [key: string]: unknown;
-}
-
-interface AuthInstanceLike {
-  handler: (req: Request) => Promise<Response>;
-  [key: string]: unknown;
-}
-
-const createAuthInstance = (
-  env: Record<string, unknown>,
-  options?: CreateAuthOptions
-): AuthInstanceLike =>
-  (
-    createAuth as unknown as (e: Record<string, unknown>, o?: CreateAuthOptions) => AuthInstanceLike
-  )(env, options);
-
-const validSecret = 'test-secret-at-least-32-chars-long-1234567890';
-const validBaseUrl = 'https://auth.example.com';
-
-function buildEnv(): Record<string, unknown> {
-  return {
-    AUTH_BASE_URL: validBaseUrl,
-    BETTER_AUTH_SECRET: validSecret,
-    DB: createMockD1(),
-  };
-}
+import { buildEnv, VALID_BASE_URL } from '../helpers/auth';
 
 function postJSON(path: string, body: Record<string, unknown>): Request {
-  return new Request(`${validBaseUrl}/api/auth${path}`, {
+  return new Request(`${VALID_BASE_URL}/api/auth${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
@@ -77,18 +12,18 @@ function postJSON(path: string, body: Record<string, unknown>): Request {
 }
 
 function getRequest(path: string): Request {
-  return new Request(`${validBaseUrl}/api/auth${path}`);
+  return new Request(`${VALID_BASE_URL}/api/auth${path}`);
 }
 
 describe('allowedMethods restricts sign-in routes per deployment', () => {
-  let validEnv: Record<string, unknown>;
+  let validEnv: ReturnType<typeof buildEnv>;
 
   beforeEach(() => {
     validEnv = buildEnv();
   });
 
   function buildGoogleAndPhoneAuth(allowedMethods: Array<'phone' | 'google' | 'magic-link'>) {
-    return createAuthInstance(validEnv, {
+    return createAuth(validEnv, {
       google: { clientId: 'client-id', clientSecret: 'client-secret' },
       phone: { sendOTP: async () => {} },
       allowedMethods,
@@ -184,7 +119,7 @@ describe('allowedMethods restricts sign-in routes per deployment', () => {
 
   describe('magic-link restricted when magic-link is not in allowedMethods', () => {
     it('rejects a magic-link sign-in request with 403 when only google is allowed', async () => {
-      const auth = createAuthInstance(validEnv, {
+      const auth = createAuth(validEnv, {
         google: { clientId: 'client-id', clientSecret: 'client-secret' },
         magicLink: { sendMagicLink: async () => {} },
         allowedMethods: ['google'],
@@ -198,7 +133,7 @@ describe('allowedMethods restricts sign-in routes per deployment', () => {
     });
 
     it('leaves the magic-link route mounted, returning 403 rather than 404', async () => {
-      const auth = createAuthInstance(validEnv, {
+      const auth = createAuth(validEnv, {
         google: { clientId: 'client-id', clientSecret: 'client-secret' },
         magicLink: { sendMagicLink: async () => {} },
         allowedMethods: ['google'],
@@ -215,14 +150,14 @@ describe('allowedMethods restricts sign-in routes per deployment', () => {
   describe('composition with a user-supplied hooks.before', () => {
     it('still invokes an existing options.betterAuth.hooks.before alongside the allowedMethods check', async () => {
       const calls: string[] = [];
-      const auth = createAuthInstance(validEnv, {
+      const auth = createAuth(validEnv, {
         google: { clientId: 'client-id', clientSecret: 'client-secret' },
         allowedMethods: ['google'],
         betterAuth: {
           hooks: {
-            before: async (ctx: unknown) => {
+            before: async (ctx: { path: string }) => {
               await Promise.resolve();
-              calls.push((ctx as { path: string }).path);
+              calls.push(ctx.path);
             },
           },
         },
@@ -234,9 +169,37 @@ describe('allowedMethods restricts sign-in routes per deployment', () => {
     });
   });
 
+  describe('a method that is not configured has no routes, allowed or not', () => {
+    it('returns 404 for phone routes when phone is not configured, even if allowedMethods lists it', async () => {
+      const auth = createAuth(validEnv, {
+        google: { clientId: 'client-id', clientSecret: 'client-secret' },
+        allowedMethods: ['phone', 'google'],
+      });
+
+      const res = await auth.handler(
+        postJSON('/phone-number/send-otp', { phoneNumber: '+15551234567' })
+      );
+
+      expect(res.status).toBe(404);
+    });
+
+    it('returns 404, not 403, for magic-link routes when magicLink is not configured and not allowed', async () => {
+      const auth = createAuth(validEnv, {
+        google: { clientId: 'client-id', clientSecret: 'client-secret' },
+        allowedMethods: ['google'],
+      });
+
+      const res = await auth.handler(
+        postJSON('/sign-in/magic-link', { email: 'user@example.com' })
+      );
+
+      expect(res.status).toBe(404);
+    });
+  });
+
   describe('no allowedMethods configured', () => {
     it('serves phone OTP send-otp without restriction when allowedMethods is not set', async () => {
-      const auth = createAuthInstance(validEnv, {
+      const auth = createAuth(validEnv, {
         phone: { sendOTP: async () => {} },
       });
 

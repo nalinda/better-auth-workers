@@ -10,6 +10,7 @@ interface Step {
   if?: string;
   uses?: string;
   env?: Record<string, string>;
+  'continue-on-error'?: boolean;
 }
 
 interface Job {
@@ -99,6 +100,17 @@ describe('Release workflow', () => {
       (s) => (s.run ?? '').includes('gh release create') && (s.run ?? '').includes('--draft')
     );
     expect(draftStep).toBeDefined();
+  });
+
+  it('does not swallow a failed release draft', () => {
+    const workflow = readReleaseWorkflow();
+    const steps = workflow?.jobs?.release?.steps ?? [];
+    const draftStep = steps.find((s) => (s.run ?? '').includes('gh release create'));
+    expect(draftStep).toBeDefined();
+    // `|| true` (or any `|| …` fallback) would let a bad token, an existing
+    // release or a network failure pass as success with no release drafted.
+    expect(draftStep?.run).not.toMatch(/\|\|/);
+    expect(draftStep?.['continue-on-error']).toBeUndefined();
   });
 
   it('includes visible notice when NPM_TOKEN is not configured', () => {
