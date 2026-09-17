@@ -53,6 +53,7 @@
     "@serendibyte-co/prettier-config": "git+https://github.com/serendibyte-co/prettier-config.git#v1.0.2",
     "@types/bun": "^1.4.0",
     "eslint": "^10.8.1",
+    "hono": "^4.0.0",
     "husky": "^9.1.7",
     "knip": "^6.32.2",
     "lint-staged": "^17.3.0",

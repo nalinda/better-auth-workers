@@ -35,4 +35,9 @@ export interface SessionClientOptions {
   cookieName?: string;
 }
 
-export type SessionHandler = () => Promise<void>;
+export interface RequireSessionOptions {
+  // A SessionClient built with createSessionClient, or anything with the same shape.
+  client: SessionClient;
+  // Optional role check run against the resolved session; returning false yields a 403.
+  predicate?: (session: SessionData) => boolean | Promise<boolean>;
+}
