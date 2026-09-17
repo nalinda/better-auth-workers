@@ -3,7 +3,13 @@ import { describe, expect, it } from 'bun:test';
 async function loadEntryPoint(subpath = '.'): Promise<Record<string, unknown>> {
   const candidates =
     subpath === '.'
-      ? ['better-auth-workers', '../src/index', '../src/index.ts', '../dist/index', '../dist/index.js']
+      ? [
+          'better-auth-workers',
+          '../src/index',
+          '../src/index.ts',
+          '../dist/index',
+          '../dist/index.js',
+        ]
       : [
           `better-auth-workers/${subpath.replace(/^\.\//, '')}`,
           `../src/${subpath.replace(/^\.\//, '')}`,
