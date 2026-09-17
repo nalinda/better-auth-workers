@@ -1,5 +1,6 @@
-import { betterAuth } from 'better-auth';
+import { betterAuth, type BetterAuthOptions } from 'better-auth';
 import { createAuthMiddleware } from 'better-auth/api';
+import type { admin, bearer, magicLink, phoneNumber } from 'better-auth/plugins';
 
 import { type ContextRef, withHandlerContext } from '../shared/non-blocking';
 import type { AuthEnv, ConfigValue, ExecutionContext } from '../types';
@@ -19,13 +20,29 @@ import { buildSessionInvalidationHook, buildSessionTokenCollector } from './sess
 import type { CreateAuthHook, CreateAuthHooks, CreateAuthOptions } from './types';
 import { validateConfig } from './validate';
 
-type BetterAuthInstance = ReturnType<typeof betterAuth>;
+// The instance type is Better Auth's for the plugins this package builds,
+// so `auth.api` is typed with their endpoints (admin always; phone,
+// magic-link and bearer when configured — an endpoint of a method you did
+// not configure throws at runtime, as Better Auth's own instance would).
+// `admin` is a generic factory; its endpoints only resolve when it is
+// instantiated explicitly.
+interface PackagePluginOptions {
+  plugins: [
+    ReturnType<typeof admin<Record<never, never>>>,
+    ReturnType<typeof phoneNumber>,
+    ReturnType<typeof magicLink>,
+    ReturnType<typeof bearer>,
+  ];
+}
 
-// Better Auth's own instance, with `handler` widened to take the request's
-// ExecutionContext: `auth.handler(request, ctx)` is how a Worker hands the
-// package the context its waitUntil work runs on.
-export type AuthInstance = Omit<BetterAuthInstance, 'handler'> & {
+type BetterAuthInstance = ReturnType<typeof betterAuth<PackagePluginOptions>>;
+
+// `options` is the full Better Auth options type, since the configured
+// instance is built from whatever the consumer passed, not the fixed plugin
+// list the type above is derived from.
+export type AuthInstance = Omit<BetterAuthInstance, 'handler' | 'options'> & {
   handler: (request: Request, ctx?: ExecutionContext) => Promise<Response>;
+  options: BetterAuthOptions;
 };
 
 // Better Auth's dispatcher hands hooks the raw dispatch context, which

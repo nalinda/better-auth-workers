@@ -380,6 +380,40 @@ describe('createSessionClient verifies sessions over a service binding with a KV
     });
   });
 
+  describe('client IP forwarding', () => {
+    it('forwards cf-connecting-ip as x-forwarded-for so the auth Worker rate-limits per client', async () => {
+      const { binding, seen } = fakeAuthBinding(new Date(Date.now() + 3_600_000));
+      const client = buildSessionClient({ auth: binding, kv: new FakeKV(), basePath: BASE_PATH });
+
+      await client.get(
+        new Request('https://api.example.com/me', {
+          headers: { cookie: VALID_COOKIE, 'cf-connecting-ip': '203.0.113.7' },
+        })
+      );
+
+      expect(seen[0].headers.get('x-forwarded-for')).toBe('203.0.113.7');
+    });
+
+    it('falls back to the incoming x-forwarded-for and sends nothing when neither is present', async () => {
+      const { binding, seen } = fakeAuthBinding(new Date(Date.now() + 3_600_000));
+      const client = buildSessionClient({ auth: binding, kv: new FakeKV(), basePath: BASE_PATH });
+
+      await client.get(
+        new Request('https://api.example.com/me', {
+          headers: { cookie: VALID_COOKIE, 'x-forwarded-for': '198.51.100.9' },
+        })
+      );
+      await client.get(
+        new Request('https://api.example.com/me', {
+          headers: { authorization: `Bearer ${TOKEN}` },
+        })
+      );
+
+      expect(seen[0].headers.get('x-forwarded-for')).toBe('198.51.100.9');
+      expect(seen[1].headers.get('x-forwarded-for')).toBeNull();
+    });
+  });
+
   describe('auth Worker unavailable', () => {
     it('throws SessionUnavailableError when the service binding throws', async () => {
       const binding = { fetch: () => Promise.reject(new Error('service binding not connected')) };

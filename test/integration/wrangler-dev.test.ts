@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from 'bun:test';
 
 import { type Backend, type DevServer, requestedBackends, startDevServer } from './harness';
 
@@ -22,6 +22,20 @@ const phoneSequence = { next: Date.now() % 1_000_000 };
 function nextPhone(): string {
   phoneSequence.next += 1;
   return `+1555${String(phoneSequence.next).padStart(7, '0')}`;
+}
+
+// The rate limiter is on by default, so each test is its own client: it
+// sends a distinct forwarded IP the way Cloudflare would for real clients,
+// instead of every test sharing one bucket.
+const client = { sequence: 0, ip: '203.0.113.1' };
+
+function becomeNextClient(): void {
+  client.sequence += 1;
+  client.ip = `203.0.113.${String((client.sequence % 250) + 1)}`;
+}
+
+function asClient(headers: Record<string, string> = {}): Record<string, string> {
+  return { 'x-forwarded-for': client.ip, ...headers };
 }
 
 function sessionCookieFrom(response: Response): string | undefined {
@@ -51,7 +65,7 @@ async function postJson(
 ): Promise<Response> {
   return fetch(`${server.baseUrl}${route}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', origin: server.appOrigin, ...headers },
+    headers: asClient({ 'content-type': 'application/json', origin: server.appOrigin, ...headers }),
     body: JSON.stringify(body),
   });
 }
@@ -79,7 +93,9 @@ async function getSession(
   server: DevServer,
   headers: Record<string, string>
 ): Promise<{ response: Response; body: SessionResponse | null }> {
-  const response = await fetch(`${server.baseUrl}/auth/get-session`, { headers });
+  const response = await fetch(`${server.baseUrl}/auth/get-session`, {
+    headers: asClient(headers),
+  });
   const text = await response.text();
   const body = text ? (JSON.parse(text) as SessionResponse | null) : null;
   return { response, body };
@@ -129,6 +145,10 @@ describe.each(backends)('example Worker under wrangler dev (%s)', (backend: Back
 
   beforeAll(async () => {
     server = await started;
+  });
+
+  beforeEach(() => {
+    becomeNextClient();
   });
 
   afterAll(async () => {
@@ -205,6 +225,7 @@ describe.each(backends)('example Worker under wrangler dev (%s)', (backend: Back
     // The example logs the link against its configured AUTH_BASE_URL; the
     // dev server listens on a test-chosen port, so only the path is reused.
     const verified = await fetch(`${server.baseUrl}${link.pathname}${link.search}`, {
+      headers: asClient(),
       redirect: 'manual',
     });
     expect(verified.status).toBe(302);
@@ -222,10 +243,10 @@ describe.each(backends)('example Worker under wrangler dev (%s)', (backend: Back
     const link = await requestMagicLink(server, email);
     const target = `${server.baseUrl}${link.pathname}${link.search}`;
 
-    const first = await fetch(target, { redirect: 'manual' });
+    const first = await fetch(target, { headers: asClient(), redirect: 'manual' });
     expect(sessionCookieFrom(first)).toBeDefined();
 
-    const second = await fetch(target, { redirect: 'manual' });
+    const second = await fetch(target, { headers: asClient(), redirect: 'manual' });
     expect(sessionCookieFrom(second)).toBeUndefined();
     expect(second.headers.get('location')).toMatch(/error=/);
   });
@@ -268,13 +289,17 @@ describe.each(backends)('example Worker under wrangler dev (%s)', (backend: Back
     const cookie = sessionCookieFrom(verified);
     expect(cookie).toBeDefined();
 
-    const cold = await fetch(`${server.baseUrl}/me`, { headers: { cookie: cookie as string } });
+    const cold = await fetch(`${server.baseUrl}/me`, {
+      headers: asClient({ cookie: cookie as string }),
+    });
     expect(cold.status).toBe(200);
     const coldBody: { phoneNumber?: string } = await cold.json();
     expect(coldBody.phoneNumber).toBe(phoneNumber);
 
     const before = await authCalls(server);
-    const warm = await fetch(`${server.baseUrl}/me`, { headers: { cookie: cookie as string } });
+    const warm = await fetch(`${server.baseUrl}/me`, {
+      headers: asClient({ cookie: cookie as string }),
+    });
     expect(warm.status).toBe(200);
     expect(await authCalls(server)).toBe(before);
   });
@@ -285,7 +310,9 @@ describe.each(backends)('example Worker under wrangler dev (%s)', (backend: Back
     const cookie = sessionCookieFrom(verified);
     expect(cookie).toBeDefined();
 
-    const warm = await fetch(`${server.baseUrl}/me`, { headers: { cookie: cookie as string } });
+    const warm = await fetch(`${server.baseUrl}/me`, {
+      headers: asClient({ cookie: cookie as string }),
+    });
     expect(warm.status).toBe(200);
 
     const signedOut = await postJson(server, '/auth/sign-out', {}, { cookie: cookie as string });
@@ -304,7 +331,7 @@ describe.each(backends)('example Worker under wrangler dev (%s)', (backend: Back
     expect(token).toBeTruthy();
     const authorization = `Bearer ${token as string}`;
 
-    const warm = await fetch(`${server.baseUrl}/me`, { headers: { authorization } });
+    const warm = await fetch(`${server.baseUrl}/me`, { headers: asClient({ authorization }) });
     expect(warm.status).toBe(200);
 
     const signedOut = await postJson(server, '/auth/sign-out', {}, { authorization });
@@ -312,7 +339,9 @@ describe.each(backends)('example Worker under wrangler dev (%s)', (backend: Back
 
     const { body } = await getSession(server, { authorization });
     expect(body).toBeNull();
-    const afterSignOut = await fetch(`${server.baseUrl}/me`, { headers: { authorization } });
+    const afterSignOut = await fetch(`${server.baseUrl}/me`, {
+      headers: asClient({ authorization }),
+    });
     expect(afterSignOut.status).toBe(401);
   });
 
@@ -327,7 +356,7 @@ describe.each(backends)('example Worker under wrangler dev (%s)', (backend: Back
     const token = verified.headers.get('set-auth-token');
     expect(token).toBeTruthy();
 
-    const warm = await fetch(`${server.baseUrl}/me`, { headers: { cookie: fullJar } });
+    const warm = await fetch(`${server.baseUrl}/me`, { headers: asClient({ cookie: fullJar }) });
     expect(warm.status).toBe(200);
 
     const revoked = await postJson(
@@ -338,7 +367,9 @@ describe.each(backends)('example Worker under wrangler dev (%s)', (backend: Back
     );
     expect(revoked.status).toBe(200);
 
-    const afterRevoke = await fetch(`${server.baseUrl}/me`, { headers: { cookie: fullJar } });
+    const afterRevoke = await fetch(`${server.baseUrl}/me`, {
+      headers: asClient({ cookie: fullJar }),
+    });
     expect(afterRevoke.status).toBe(401);
   });
 
@@ -349,14 +380,31 @@ describe.each(backends)('example Worker under wrangler dev (%s)', (backend: Back
     expect(token).toBeTruthy();
     const authorization = `Bearer ${token as string}`;
 
-    const warm = await fetch(`${server.baseUrl}/me`, { headers: { authorization } });
+    const warm = await fetch(`${server.baseUrl}/me`, { headers: asClient({ authorization }) });
     expect(warm.status).toBe(200);
 
     const revoked = await postJson(server, '/auth/revoke-sessions', {}, { authorization });
     expect(revoked.status).toBe(200);
 
-    const afterRevoke = await fetch(`${server.baseUrl}/me`, { headers: { authorization } });
+    const afterRevoke = await fetch(`${server.baseUrl}/me`, {
+      headers: asClient({ authorization }),
+    });
     expect(afterRevoke.status).toBe(401);
+  });
+
+  it('rate limiting is on by default: a sixth magic-link request from one client in a window is refused', async () => {
+    // The magic-link plugin's own rule is 5 per 60 seconds; the example sets
+    // no NODE_ENV and no rateLimit option, so this is the package default.
+    const statuses: number[] = [];
+    for (let i = 0; i < 6; i += 1) {
+      const res = await postJson(server, '/auth/sign-in/magic-link', {
+        email: `burst-${String(i)}-${String(Date.now())}@example.com`,
+        callbackURL: '/',
+      });
+      statuses.push(res.status);
+    }
+
+    expect(statuses).toEqual([200, 200, 200, 200, 200, 429]);
   });
 
   it('allowedMethods rejects a sign-in method the Worker does not allow with 403', async () => {

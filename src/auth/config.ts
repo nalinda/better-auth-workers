@@ -28,13 +28,18 @@ export function buildSessionConfig(options?: CreateAuthOptions): Loose {
   return { ...session, cookieCache };
 }
 
+// Better Auth only turns its rate limiter on when `NODE_ENV` is
+// "production", read from the runtime's `process.env`. On Workers that
+// holds the Worker's own vars, not a build-time NODE_ENV, so left to Better
+// Auth the limiter would be off in a deployed Worker. It is on by default
+// here, in KV; `betterAuth.rateLimit` can still turn it off or tune it.
 export function buildRateLimitConfig(
   options?: CreateAuthOptions,
   secondaryStorage?: CreateAuthSecondaryStorage
 ): Loose | undefined {
   const rateLimit = betterAuthField(options, 'rateLimit');
   if (!secondaryStorage) return rateLimit;
-  return { storage: 'secondary-storage', ...rateLimit };
+  return { enabled: true, storage: 'secondary-storage', ...rateLimit };
 }
 
 // Schema validation is off by default because the schema ships as SQL

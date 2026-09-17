@@ -289,7 +289,12 @@ describe('Plugin configuration', () => {
 describe('betterAuth is the single escape hatch, layered over the package defaults', () => {
   it('rateLimit: betterAuth.rateLimit keeps the KV storage default unless it overrides it', () => {
     const auth = createAuth(buildEnv(), { betterAuth: { rateLimit: { max: 5, window: 30 } } });
-    expect(auth.options.rateLimit).toEqual({ storage: 'secondary-storage', max: 5, window: 30 });
+    expect(auth.options.rateLimit).toEqual({
+      enabled: true,
+      storage: 'secondary-storage',
+      max: 5,
+      window: 30,
+    });
 
     const memory = createAuth(buildEnv(), { betterAuth: { rateLimit: { storage: 'memory' } } });
     expect(memory.options.rateLimit?.storage).toBe('memory');
@@ -399,6 +404,28 @@ describe('Hook composition', () => {
     await auth.handler(getSession());
 
     expect(calls).toEqual(['before', 'after']);
+  });
+});
+
+describe('auth.api is typed with the package’s plugin endpoints', () => {
+  // Compile-time (via `bun run ts-check`) as much as runtime: each of these
+  // is an endpoint a plugin the package builds contributes.
+  it('exposes admin, phone, magic-link and bearer endpoints on the instance', () => {
+    const auth = createAuth(buildEnv(), {
+      phone: { sendOTP: () => {} },
+      magicLink: { sendMagicLink: () => {} },
+      bearer: true,
+    });
+
+    const endpoints: Array<(...args: never[]) => unknown> = [
+      auth.api.sendPhoneNumberOTP,
+      auth.api.verifyPhoneNumber,
+      auth.api.signInMagicLink,
+      auth.api.listUsers,
+      auth.api.banUser,
+      auth.api.getSession,
+    ];
+    for (const endpoint of endpoints) expect(typeof endpoint).toBe('function');
   });
 });
 

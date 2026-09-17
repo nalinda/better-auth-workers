@@ -87,6 +87,12 @@ async function fetchSession(
   const basePath = options.basePath ?? DEFAULT_BASE_PATH;
   const url = `${SERVICE_BINDING_ORIGIN}${basePath.replace(/\/$/, '')}/get-session?disableCookieCache=true`;
   const headers = new Headers({ accept: 'application/json' });
+  // The auth Worker rate-limits per client IP (it reads x-forwarded-for);
+  // behind a service binding it would otherwise only ever see one shared
+  // bucket. Cloudflare's cf-connecting-ip is the client on Workers.
+  const clientIp =
+    request.headers.get('cf-connecting-ip') ?? request.headers.get('x-forwarded-for');
+  if (clientIp) headers.set('x-forwarded-for', clientIp);
   if (credential.source === 'cookie') {
     const sessionCookie = sessionCookiePairFrom(request, cookieName);
     if (sessionCookie) headers.set('cookie', sessionCookie);
