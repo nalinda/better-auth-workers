@@ -267,6 +267,64 @@ describe('Plugin configuration', () => {
   });
 });
 
+describe('Passthrough options share one merge rule: default, top-level, then betterAuth, field by field', () => {
+  it('rateLimit: betterAuth.rateLimit layers on options.rateLimit on the KV default', () => {
+    const auth = createAuth(buildEnv(), {
+      rateLimit: { max: 5, window: 10 },
+      betterAuth: { rateLimit: { window: 30 } },
+    });
+    expect(auth.options.rateLimit).toEqual({ storage: 'secondary-storage', max: 5, window: 30 });
+  });
+
+  it('session: betterAuth.session layers on options.session on the cookie-cache default', () => {
+    const auth = createAuth(buildEnv(), {
+      session: { expiresIn: 100, updateAge: 10 },
+      betterAuth: { session: { updateAge: 20 } },
+    });
+    expect(auth.options.session).toEqual({
+      expiresIn: 100,
+      updateAge: 20,
+      cookieCache: { enabled: true },
+    });
+  });
+
+  it('advanced: betterAuth.advanced layers on options.advanced without re-enabling schema validation', () => {
+    const auth = createAuth(buildEnv(), {
+      advanced: { disableCSRFCheck: true, cookiePrefix: 'a' },
+      betterAuth: { advanced: { cookiePrefix: 'b' } },
+    });
+    expect(auth.options.advanced).toEqual({
+      disableCSRFCheck: true,
+      cookiePrefix: 'b',
+      database: { validateSchema: false },
+    });
+  });
+
+  it('hooks: a before from options.hooks and an after from betterAuth.hooks both run', async () => {
+    const calls: string[] = [];
+    const auth = createAuth(buildEnv(), {
+      hooks: {
+        before: async () => {
+          await Promise.resolve();
+          calls.push('before');
+        },
+      },
+      betterAuth: {
+        hooks: {
+          after: async () => {
+            await Promise.resolve();
+            calls.push('after');
+          },
+        },
+      },
+    });
+
+    await auth.handler(getSession());
+
+    expect(calls).toEqual(['before', 'after']);
+  });
+});
+
 describe('Hook composition', () => {
   it('keeps a user hooks.before when only KV (an after hook of ours) is configured', async () => {
     const before = mock(async (_ctx: unknown) => {

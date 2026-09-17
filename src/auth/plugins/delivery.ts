@@ -24,13 +24,21 @@ function redact(text: string, secrets: string[]): string {
   return redacted;
 }
 
-// Errors and strings are redacted; any other thrown value is logged as is,
-// the same way the phone path always handled it.
+// Any rejection value is redacted: an Error by its message, a string as
+// is, and anything else (an SDK rejecting with a parsed error response, a
+// plain object echoing the request body) by serialising it first, so the
+// logged form can never carry the code or link.
 function redactSecrets(error: Error | string | object, secrets: string[]): unknown {
   if (error instanceof Error) {
     const message = redact(error.message, secrets);
     return message === error.message ? error : new Error(message);
   }
   if (typeof error === 'string') return redact(error, secrets);
-  return error;
+  let serialised: string;
+  try {
+    serialised = JSON.stringify(error);
+  } catch {
+    serialised = '[unserialisable delivery error]';
+  }
+  return redact(serialised, secrets);
 }

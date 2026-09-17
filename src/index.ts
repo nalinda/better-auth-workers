@@ -6,6 +6,7 @@ export type {
   CreateAuthDatabaseOptions,
   CreateAuthHook,
   CreateAuthHooks,
+  CreateAuthMagicLinkOptions,
   CreateAuthOptions,
   CreateAuthPhoneOptions,
   CreateAuthRateLimitOptions,

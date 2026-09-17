@@ -40,21 +40,24 @@ function allCookiesFrom(response: Response): string {
     .join('; ');
 }
 
+// Better Auth's CSRF check (on by default; the example keeps it) refuses a
+// cookie-bearing POST whose Origin is not a trusted one, so the suite sends
+// the example's configured origin the way a browser on the app would.
 async function postJson(
-  baseUrl: string,
+  server: DevServer,
   route: string,
   body: unknown,
   headers: Record<string, string> = {}
 ): Promise<Response> {
-  return fetch(`${baseUrl}${route}`, {
+  return fetch(`${server.baseUrl}${route}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...headers },
+    headers: { 'content-type': 'application/json', origin: server.appOrigin, ...headers },
     body: JSON.stringify(body),
   });
 }
 
 async function requestOtp(server: DevServer, phoneNumber: string): Promise<string> {
-  const sent = await postJson(server.baseUrl, '/auth/phone-number/send-otp', { phoneNumber });
+  const sent = await postJson(server, '/auth/phone-number/send-otp', { phoneNumber });
   expect(sent.status).toBe(200);
   const pattern = /OTP for (?<phone>\+\d+): (?<code>\d{4,8})/;
   const match = await server.waitForOutput(
@@ -69,7 +72,7 @@ async function requestOtp(server: DevServer, phoneNumber: string): Promise<strin
 
 async function signInWithPhone(server: DevServer, phoneNumber: string): Promise<Response> {
   const code = await requestOtp(server, phoneNumber);
-  return postJson(server.baseUrl, '/auth/phone-number/verify', { phoneNumber, code });
+  return postJson(server, '/auth/phone-number/verify', { phoneNumber, code });
 }
 
 async function getSession(
@@ -83,7 +86,7 @@ async function getSession(
 }
 
 async function requestMagicLink(server: DevServer, email: string): Promise<URL> {
-  const sent = await postJson(server.baseUrl, '/auth/sign-in/magic-link', {
+  const sent = await postJson(server, '/auth/sign-in/magic-link', {
     email,
     callbackURL: '/',
   });
@@ -153,12 +156,7 @@ describe.each(requestedBackends())('example Worker under wrangler dev (%s)', (ba
     const cookie = sessionCookieFrom(verified);
     expect(cookie).toBeDefined();
 
-    const signedOut = await postJson(
-      server.baseUrl,
-      '/auth/sign-out',
-      {},
-      { cookie: cookie as string }
-    );
+    const signedOut = await postJson(server, '/auth/sign-out', {}, { cookie: cookie as string });
     expect(signedOut.status).toBe(200);
     expect(await signedOut.json()).toEqual({ success: true });
 
@@ -273,12 +271,7 @@ describe.each(requestedBackends())('example Worker under wrangler dev (%s)', (ba
     const warm = await fetch(`${server.baseUrl}/me`, { headers: { cookie: cookie as string } });
     expect(warm.status).toBe(200);
 
-    const signedOut = await postJson(
-      server.baseUrl,
-      '/auth/sign-out',
-      {},
-      { cookie: cookie as string }
-    );
+    const signedOut = await postJson(server, '/auth/sign-out', {}, { cookie: cookie as string });
     expect(signedOut.status).toBe(200);
 
     const afterSignOut = await fetch(`${server.baseUrl}/me`, {
@@ -297,7 +290,7 @@ describe.each(requestedBackends())('example Worker under wrangler dev (%s)', (ba
     const warm = await fetch(`${server.baseUrl}/me`, { headers: { authorization } });
     expect(warm.status).toBe(200);
 
-    const revoked = await postJson(server.baseUrl, '/auth/revoke-sessions', {}, { authorization });
+    const revoked = await postJson(server, '/auth/revoke-sessions', {}, { authorization });
     expect(revoked.status).toBe(200);
 
     const afterRevoke = await fetch(`${server.baseUrl}/me`, { headers: { authorization } });
@@ -305,7 +298,7 @@ describe.each(requestedBackends())('example Worker under wrangler dev (%s)', (ba
   });
 
   it('allowedMethods rejects a sign-in method the Worker does not allow with 403', async () => {
-    const rejected = await postJson(server.baseUrl, '/auth/sign-in/social', {
+    const rejected = await postJson(server, '/auth/sign-in/social', {
       provider: 'google',
       callbackURL: '/',
     });

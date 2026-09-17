@@ -33,15 +33,6 @@ app.on(['GET', 'POST'], '/auth/*', (c) => {
     // of this list is refused with 403; a method that is not configured at
     // all has no routes and 404s.
     allowedMethods: hasGoogle ? ['phone', 'magic-link', 'google'] : ['phone', 'magic-link'],
-    betterAuth: {
-      advanced: {
-        // This Worker serves non-browser clients (phone OTP + bearer) that
-        // send no Origin header. Better Auth's CSRF check refuses any
-        // cookie-bearing POST without one, so it is disabled here. Keep it
-        // on for a Worker whose clients are browsers.
-        disableCSRFCheck: true,
-      },
-    },
   });
 
   // The request's ExecutionContext goes with every call: the instance is

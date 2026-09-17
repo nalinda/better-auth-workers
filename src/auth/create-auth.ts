@@ -4,7 +4,7 @@ import { createAuthMiddleware } from 'better-auth/api';
 import { type ContextRef, withHandlerContext } from '../shared/non-blocking';
 import type { AuthEnv, ConfigValue, ExecutionContext } from '../types';
 import { buildAllowedMethodsHook } from './allowed-methods';
-import { buildRateLimitConfig, buildSessionConfig } from './config';
+import { buildRateLimitConfig, buildSessionConfig, layerOptions } from './config';
 import {
   resolveDatabase,
   type ResolvedDatabase,
@@ -81,12 +81,16 @@ function buildHooksField(
   options: CreateAuthOptions | undefined,
   ours: OwnHooks
 ): Record<string, never> | { hooks: CreateAuthHooks } {
-  const user = (options?.betterAuth?.hooks ?? options?.hooks) as CreateAuthHooks | undefined;
-  if (ours.before.length === 0 && ours.after.length === 0) return user ? { hooks: user } : {};
+  const user = layerOptions<CreateAuthHooks>(
+    options?.hooks,
+    options?.betterAuth?.hooks as CreateAuthHooks | undefined
+  );
+  if (ours.before.length === 0 && ours.after.length === 0) {
+    return user.before || user.after ? { hooks: user } : {};
+  }
   const hooks: CreateAuthHooks = {};
-  if (ours.before.length > 0 || user?.before)
-    hooks.before = composeBefore(ours.before, user?.before);
-  if (ours.after.length > 0 || user?.after) hooks.after = composeAfter(ours.after, user?.after);
+  if (ours.before.length > 0 || user.before) hooks.before = composeBefore(ours.before, user.before);
+  if (ours.after.length > 0 || user.after) hooks.after = composeAfter(ours.after, user.after);
   return { hooks };
 }
 
@@ -104,14 +108,16 @@ function buildOwnHooks(options: CreateAuthOptions | undefined, env: AuthEnv): Ow
 
 // Schema validation is off by default because the schema ships as SQL
 // migrations (see migrations/) and D1/Hyperdrive have no introspection the
-// check could use. A consumer's `advanced` settings (through `options` or
-// `options.betterAuth`) are layered on top rather than replacing the default,
-// so setting e.g. `advanced.disableCSRFCheck` does not silently turn the
-// schema check back on.
+// check could use. A consumer's `advanced` settings (`options.advanced`,
+// then `options.betterAuth.advanced`) are layered on top rather than
+// replacing the default, so setting e.g. `advanced.disableCSRFCheck` does
+// not silently turn the schema check back on.
 function buildAdvancedConfig(options?: CreateAuthOptions): Record<string, ConfigValue> {
-  const user = (options?.betterAuth?.advanced ?? options?.advanced) as
-    Record<string, ConfigValue> | undefined;
-  const userDatabase = user?.database as Record<string, ConfigValue> | undefined;
+  const user = layerOptions<Record<string, ConfigValue>>(
+    options?.advanced,
+    options?.betterAuth?.advanced as Record<string, ConfigValue> | undefined
+  );
+  const userDatabase = user.database as Record<string, ConfigValue> | undefined;
   return {
     ...user,
     database: { validateSchema: false, ...userDatabase },

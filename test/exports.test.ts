@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
+import type { CreateAuthMagicLinkOptions, CreateAuthPhoneOptions } from '../src/index';
+
 async function loadEntryPoint(subpath = '.'): Promise<Record<string, unknown>> {
   const candidates =
     subpath === '.'
@@ -42,5 +44,13 @@ describe('Entry points export documented functions', () => {
   it('exports requireSession as a function from ./client entry point', async () => {
     const client = await loadEntryPoint('./client');
     expect(typeof client.requireSession).toBe('function');
+  });
+
+  it('exports the CreateAuth*Options types, including CreateAuthMagicLinkOptions', () => {
+    // Type-level: this compiles only if the type is exported from '.'.
+    const magicLink: CreateAuthMagicLinkOptions = { sendMagicLink: () => {} };
+    const phone: CreateAuthPhoneOptions = { sendOTP: () => {} };
+    expect(typeof magicLink.sendMagicLink).toBe('function');
+    expect(typeof phone.sendOTP).toBe('function');
   });
 });

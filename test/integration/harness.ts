@@ -19,6 +19,9 @@ export interface Counters {
 
 export interface DevServer {
   baseUrl: string;
+  // The example's configured AUTH_BASE_URL: Better Auth's trusted origin,
+  // which cookie-bearing POSTs must name in `Origin` to pass its CSRF check.
+  appOrigin: string;
   output: () => string;
   waitForOutput: (
     pattern: RegExp,
@@ -183,15 +186,34 @@ async function provisionPostgres(): Promise<PostgresHandle> {
 // The auth Worker under test is the example's own wrangler config (name,
 // bindings, environments, flags) with only `main` pointed at the counting
 // wrapper in ./auth, so the config the example ships stays what is exercised.
-function writeAuthWorkerConfig(persistTo: string): string {
+interface ExampleConfig {
+  $schema?: string;
+  main?: string;
+  vars?: Record<string, string>;
+  env?: Record<string, { vars?: Record<string, string> }>;
+}
+
+function readExampleConfig(): ExampleConfig {
   // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path
   const raw = fs.readFileSync(exampleConfig, 'utf8');
-  const config = JSON.parse(
+  return JSON.parse(
     raw
       .replaceAll(/\/\/[^\n]*/g, '')
       .replaceAll(/\/\*[\s\S]*?\*\//g, '')
       .replaceAll(/,(\s*[}\]])/g, '$1')
-  ) as Record<string, unknown>;
+  ) as ExampleConfig;
+}
+
+function exampleAppOrigin(backend: Backend): string {
+  const config = readExampleConfig();
+  const envConfig = new Map(Object.entries(config.env ?? {})).get(backend);
+  const baseUrl = envConfig?.vars?.AUTH_BASE_URL ?? config.vars?.AUTH_BASE_URL;
+  if (!baseUrl) throw new Error('examples/hono/wrangler.jsonc sets no AUTH_BASE_URL');
+  return new URL(baseUrl).origin;
+}
+
+function writeAuthWorkerConfig(persistTo: string): string {
+  const config = readExampleConfig();
   delete config.$schema;
   config.main = authWrapperEntry;
   const configPath = path.join(persistTo, 'auth.wrangler.json');
@@ -366,6 +388,7 @@ export async function startDevServer(backend: Backend): Promise<DevServer> {
 
   return {
     baseUrl,
+    appOrigin: exampleAppOrigin(backend),
     output: () => buffer,
     waitForOutput,
     counters,

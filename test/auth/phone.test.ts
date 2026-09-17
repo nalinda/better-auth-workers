@@ -165,6 +165,46 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
     });
   });
 
+  describe('Log hygiene for non-Error rejections', () => {
+    it('redacts the code from a plain-object rejection before logging it', async () => {
+      let sentCode = '';
+      const sendOTP = mock(({ code }: { phoneNumber: string; code: string }) => {
+        sentCode = code;
+        // An SDK rejecting with a parsed error response that echoes the request.
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- the non-Error rejection is the case under test
+        return Promise.reject({ status: 502, request: { text: `Your code is ${code}` } });
+      });
+      const { ctx, promises } = createMockExecutionContext();
+      const auth = createAuth(validEnv, { ctx, phone: { sendOTP } });
+
+      const capturedLogs: string[] = [];
+      const originalError = console.error;
+      console.error = (...args: unknown[]) => {
+        capturedLogs.push(args.map(String).join(' '));
+      };
+      try {
+        const res = await auth.handler(
+          new Request('https://auth.example.com/api/auth/phone-number/send-otp', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ phoneNumber: '+15551234567' }),
+          }),
+          ctx
+        );
+        expect(res.status).toBe(200);
+        await Promise.all(promises);
+
+        expect(sentCode.length).toBeGreaterThan(0);
+        const allLogs = capturedLogs.join('\n');
+        expect(allLogs).toContain('502');
+        expect(allLogs).toContain('[REDACTED]');
+        expect(allLogs).not.toContain(sentCode);
+      } finally {
+        console.error = originalError;
+      }
+    });
+  });
+
   describe('E.164 phone number validation', () => {
     it('rejects an invalid phone number before sendOTP is invoked', async () => {
       const sendOTP = mock(() => {});
