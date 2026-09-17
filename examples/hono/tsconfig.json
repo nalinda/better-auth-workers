@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2025",
+    "lib": ["ES2025"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["bun", "@cloudflare/workers-types"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "paths": {
+      "better-auth-workers": ["../../src/index.ts"],
+      "better-auth-workers/client": ["../../src/client.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

@@ -1,0 +1,57 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "example-hono",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-16",
+  "compatibility_flags": ["nodejs_compat"],
+  "kv_namespaces": [
+    {
+      "binding": "AUTH_KV",
+      "id": "example-auth-kv-id",
+    },
+  ],
+  "vars": {
+    "AUTH_BASE_URL": "http:\/\/localhost:8787",
+    "BETTER_AUTH_SECRET": "example-secret-value-must-be-at-least-32-chars-long",
+  },
+  "env": {
+    "d1": {
+      "vars": {
+        "AUTH_BASE_URL": "http:\/\/localhost:8787",
+        "BETTER_AUTH_SECRET": "example-secret-value-must-be-at-least-32-chars-long",
+      },
+      "kv_namespaces": [
+        {
+          "binding": "AUTH_KV",
+          "id": "example-auth-kv-id",
+        },
+      ],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "example-auth-db",
+          "database_id": "example-auth-db-id",
+        },
+      ],
+    },
+    "hyperdrive": {
+      "vars": {
+        "AUTH_BASE_URL": "http:\/\/localhost:8787",
+        "BETTER_AUTH_SECRET": "example-secret-value-must-be-at-least-32-chars-long",
+      },
+      "kv_namespaces": [
+        {
+          "binding": "AUTH_KV",
+          "id": "example-auth-kv-id",
+        },
+      ],
+      "hyperdrive": [
+        {
+          "binding": "HYPERDRIVE",
+          "id": "example-hyperdrive-id",
+          "localConnectionString": "postgresql:\/\/postgres:postgres@localhost:5432/auth_example",
+        },
+      ],
+    },
+  },
+}

@@ -50,4 +50,11 @@ export default [
       'sonarjs/max-lines-per-function': 'off',
     },
   },
+  {
+    // Example apps configure router instances at module top level.
+    files: ['examples/**/*.ts'],
+    rules: {
+      'unicorn/no-top-level-side-effects': 'off',
+    },
+  },
 ];

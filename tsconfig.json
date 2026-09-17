@@ -12,7 +12,11 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "paths": {
+      "better-auth-workers": ["./src/index.ts"],
+      "better-auth-workers/client": ["./src/client.ts"]
+    }
   },
   "include": ["src/**/*.ts", "examples/**/*.ts", "test/**/*.ts"]
 }
