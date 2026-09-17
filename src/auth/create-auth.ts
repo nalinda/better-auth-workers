@@ -2,6 +2,7 @@ import { betterAuth, type BetterAuthOptions } from 'better-auth';
 import { createAuthMiddleware } from 'better-auth/api';
 import type { admin, bearer, magicLink, phoneNumber } from 'better-auth/plugins';
 
+import { BoundedMap } from '../shared/bounded-map';
 import { type ContextRef, withHandlerContext } from '../shared/non-blocking';
 import type { AuthEnv, ConfigValue, ExecutionContext } from '../types';
 import { buildAllowedMethodsHook } from './allowed-methods';
@@ -134,7 +135,7 @@ interface CachedInstance {
 // request. The key ignores functions (see options-key.ts), so the memoised
 // instance keeps the callbacks of the request that built it — the README
 // warns that they must not close over per-request state.
-const instanceCache = new WeakMap<object, Map<string, CachedInstance>>();
+const instanceCache = new WeakMap<object, BoundedMap<string, CachedInstance>>();
 
 function getCachedInstance(env: object, optionsKey: string): CachedInstance | undefined {
   return instanceCache.get(env)?.get(optionsKey);
@@ -149,12 +150,8 @@ const MAX_SHAPES_PER_ENV = 8;
 function setCachedInstance(env: object, optionsKey: string, cached: CachedInstance): void {
   let envMap = instanceCache.get(env);
   if (!envMap) {
-    envMap = new Map();
+    envMap = new BoundedMap(MAX_SHAPES_PER_ENV);
     instanceCache.set(env, envMap);
-  }
-  if (envMap.size >= MAX_SHAPES_PER_ENV) {
-    const oldest = envMap.keys().next().value;
-    if (oldest !== undefined) envMap.delete(oldest);
   }
   envMap.set(optionsKey, cached);
 }

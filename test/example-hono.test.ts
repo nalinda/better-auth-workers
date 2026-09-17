@@ -4,6 +4,8 @@ import path from 'node:path';
 
 import { describe, expect, it, mock } from 'bun:test';
 
+import { parseJsonc } from './helpers/jsonc';
+
 interface PackageJson {
   name?: string;
   type?: string;
@@ -102,12 +104,7 @@ function readJsonFile<T>(relativePath: string): T | undefined {
   // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path
   if (!fs.existsSync(filePath)) return undefined;
   // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path
-  const raw = fs.readFileSync(filePath, 'utf8');
-  const sanitized = raw
-    .replaceAll(/\/\/[^\n]*/g, '')
-    .replaceAll(/\/\*[\s\S]*?\*\//g, '')
-    .replaceAll(/,(\s*[}\]])/g, '$1');
-  return JSON.parse(sanitized) as T;
+  return parseJsonc<T>(fs.readFileSync(filePath, 'utf8'));
 }
 
 function readFileText(relativePath: string): string {

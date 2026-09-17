@@ -1,15 +1,11 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 
 import { createAuth } from '../../src/index';
-import { buildEnv, VALID_BASE_URL } from '../helpers/auth';
+import { buildEnv, postJSON as postJSONTo, VALID_BASE_URL } from '../helpers/auth';
 
-function postJSON(path: string, body: Record<string, unknown>): Request {
-  return new Request(`${VALID_BASE_URL}/api/auth${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-}
+// Routes here are relative to the instance's basePath.
+const postJSON = (path: string, body: Record<string, unknown>): Request =>
+  postJSONTo(`${VALID_BASE_URL}/api/auth${path}`, body);
 
 function getRequest(path: string): Request {
   return new Request(`${VALID_BASE_URL}/api/auth${path}`);

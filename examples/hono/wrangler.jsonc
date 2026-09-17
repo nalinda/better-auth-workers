@@ -13,12 +13,12 @@
     },
   ],
   "vars": {
-    "AUTH_BASE_URL": "http:\/\/localhost:8787",
+    "AUTH_BASE_URL": "http://localhost:8787",
   },
   "env": {
     "d1": {
       "vars": {
-        "AUTH_BASE_URL": "http:\/\/localhost:8787",
+        "AUTH_BASE_URL": "http://localhost:8787",
       },
       "kv_namespaces": [
         {
@@ -36,7 +36,7 @@
     },
     "hyperdrive": {
       "vars": {
-        "AUTH_BASE_URL": "http:\/\/localhost:8787",
+        "AUTH_BASE_URL": "http://localhost:8787",
       },
       "kv_namespaces": [
         {
@@ -48,7 +48,7 @@
         {
           "binding": "HYPERDRIVE",
           "id": "example-hyperdrive-id",
-          "localConnectionString": "postgresql:\/\/postgres:postgres@localhost:5432/auth_example",
+          "localConnectionString": "postgresql://postgres:postgres@localhost:5432/auth_example",
         },
       ],
     },

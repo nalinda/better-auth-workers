@@ -1,4 +1,5 @@
 import type { ExecutionContext } from '../types';
+import type { HandlerHost } from './handler-host';
 
 // The fallback ExecutionContext for an instance (`options.ctx`). It is a
 // mutable holder rather than a captured value because the D1 path memoises
@@ -60,10 +61,6 @@ export function runNonBlocking(
   if (ctx && typeof ctx.waitUntil === 'function') {
     ctx.waitUntil(promise);
   }
-}
-
-interface HandlerHost {
-  handler: (request: Request, ctx?: ExecutionContext) => Promise<Response>;
 }
 
 // Records the per-request ExecutionContext against the Request so plugin

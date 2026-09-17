@@ -12,9 +12,9 @@ function betterAuthField(
   options: CreateAuthOptions | undefined,
   field: 'session' | 'rateLimit' | 'advanced'
 ): Loose | undefined {
-  const escapeHatch = options?.betterAuth;
-  if (!escapeHatch) return;
-  const value = new Map(Object.entries(escapeHatch)).get(field);
+  // `field` is a closed literal union, so this is not an injection sink.
+  // eslint-disable-next-line security/detect-object-injection -- field is a closed literal union
+  const value = options?.betterAuth?.[field];
   return value && typeof value === 'object' ? (value as Loose) : undefined;
 }
 

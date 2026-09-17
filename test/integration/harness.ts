@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { SQL } from 'bun';
 
+import { parseJsonc } from '../helpers/jsonc';
 import { type PostgresProxy, startPostgresProxy } from './postgres-proxy';
 
 export type Backend = 'd1' | 'hyperdrive';
@@ -212,13 +213,7 @@ interface ExampleConfig {
 
 function readExampleConfig(): ExampleConfig {
   // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path
-  const raw = fs.readFileSync(exampleConfig, 'utf8');
-  return JSON.parse(
-    raw
-      .replaceAll(/\/\/[^\n]*/g, '')
-      .replaceAll(/\/\*[\s\S]*?\*\//g, '')
-      .replaceAll(/,(\s*[}\]])/g, '$1')
-  ) as ExampleConfig;
+  return parseJsonc<ExampleConfig>(fs.readFileSync(exampleConfig, 'utf8'));
 }
 
 function exampleAppOrigin(backend: Backend): string {

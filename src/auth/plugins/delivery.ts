@@ -38,7 +38,19 @@ function redact(text: string, secrets: string[]): string {
 function redactSecrets(error: Error | string | object, secrets: string[]): unknown {
   if (error instanceof Error) {
     const message = redact(error.message, secrets);
-    return message === error.message ? error : new Error(message);
+    if (message === error.message) return error;
+    // Only the message is redacted; the stack and cause stay, since they
+    // are what makes a real delivery failure debuggable.
+    const redactedError = new Error(message, { cause: error.cause });
+    // Carried over onto the error we construct (not mutating a caught one):
+    // the original name and the redacted stack.
+    Object.defineProperties(redactedError, {
+      name: { value: error.name, configurable: true, writable: true },
+      ...(error.stack && {
+        stack: { value: redact(error.stack, secrets), configurable: true, writable: true },
+      }),
+    });
+    return redactedError;
   }
   if (typeof error === 'string') return redact(error, secrets);
   let serialised: string;

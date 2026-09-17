@@ -20,13 +20,15 @@ import type { CreateAuthOptions } from './types';
 // runs `after` hooks for failed endpoints too (the context then carries an
 // APIError as `returned`), and nothing is invalidated in that case: an
 // unauthenticated `/revoke-session` must not evict anyone's cache entry.
-interface SessionRecord {
+interface SessionTokenRow {
   token: string;
 }
 
 interface InternalAdapter {
-  findSession: (token: string) => Promise<{ session: SessionRecord; user: { id: string } } | null>;
-  listSessions: (userId: string) => Promise<SessionRecord[]>;
+  findSession: (
+    token: string
+  ) => Promise<{ session: SessionTokenRow; user: { id: string } } | null>;
+  listSessions: (userId: string) => Promise<SessionTokenRow[]>;
 }
 
 interface HookContext {

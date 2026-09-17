@@ -1,3 +1,4 @@
+import { BoundedMap } from '../shared/bounded-map';
 import { KV_MIN_TTL_SECONDS } from '../shared/session-cache';
 import type { AuthEnv, KVStore } from '../types';
 import { resolveKv } from './kv';
@@ -31,7 +32,7 @@ interface ShadowCounter extends RateLimitCounter {
 }
 
 function createCounters(kv: KVStore) {
-  const shadow = new Map<string, ShadowCounter>();
+  const shadow = new BoundedMap<string, ShadowCounter>(MAX_SHADOWED_KEYS);
   const chains = new Map<string, Promise<number>>();
 
   async function load(key: string, now: number): Promise<ShadowCounter | undefined> {
@@ -60,10 +61,6 @@ function createCounters(kv: KVStore) {
       lastWriteAt: 0,
     };
     entry.count += 1;
-    if (!shadow.has(key) && shadow.size >= MAX_SHADOWED_KEYS) {
-      const oldest = shadow.keys().next().value;
-      if (oldest !== undefined) shadow.delete(oldest);
-    }
     shadow.set(key, entry);
     await writeThrough(key, entry, now);
     return entry.count;

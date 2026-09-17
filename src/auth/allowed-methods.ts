@@ -13,7 +13,7 @@ const PHONE_PATH_PREFIXES = ['/phone-number/', '/sign-in/phone-number'];
 const MAGIC_LINK_PATHS = new Set(['/sign-in/magic-link', '/magic-link/verify']);
 
 function isPhoneRoute(path: string): boolean {
-  return PHONE_PATH_PREFIXES.some((prefix) => path === prefix || path.startsWith(prefix));
+  return PHONE_PATH_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
 function isMagicLinkRoute(path: string): boolean {
@@ -31,8 +31,10 @@ function forbidden(message: string): never {
  * rejecting stub (see disallowed-method-stubs.ts) when it is not — so a
  * client always gets a clear 403 rather than a 404.
  *
- * Get-session, sign-out and account-management routes are never restricted,
- * since this check only ever matches sign-in route paths.
+ * Get-session, sign-out and account-management routes are never restricted:
+ * the check matches only the sign-in routes of google and magic link, and
+ * every route the phone plugin mounts (`/phone-number/*`, which includes
+ * its password-reset routes as well as sign-in and OTP).
  *
  * Returns `undefined` when `options.allowedMethods` is not set, since there
  * is nothing to restrict.

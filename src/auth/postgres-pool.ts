@@ -1,3 +1,4 @@
+import type { HandlerHost } from '../shared/handler-host';
 import type { ContextRef } from '../shared/non-blocking';
 import type { ConfigValue, ExecutionContext } from '../types';
 
@@ -27,10 +28,6 @@ export function loadPgPoolClass(): (new (config: PgPoolConfig) => PgPool) | unde
   } catch {
     return;
   }
-}
-
-interface HandlerHost {
-  handler: (request: Request, ctx?: ExecutionContext) => Promise<Response>;
 }
 
 const POOL_ALREADY_RELEASED_MESSAGE =
