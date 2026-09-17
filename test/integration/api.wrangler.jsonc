@@ -1,0 +1,17 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "example-hono-api",
+  "main": "../../examples/hono/src/api.ts",
+  "compatibility_date": "2026-07-16",
+  "compatibility_flags": ["nodejs_compat"],
+  "env": {
+    "d1": {
+      "kv_namespaces": [{ "binding": "AUTH_KV", "id": "example-auth-kv-id" }],
+      "services": [{ "binding": "AUTH", "service": "integration-gateway-d1" }],
+    },
+    "hyperdrive": {
+      "kv_namespaces": [{ "binding": "AUTH_KV", "id": "example-auth-kv-id" }],
+      "services": [{ "binding": "AUTH", "service": "integration-gateway-hyperdrive" }],
+    },
+  },
+}
