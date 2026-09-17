@@ -227,6 +227,40 @@ describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
     });
   });
 
+  describe('Pool release failure without a context', () => {
+    it('logs a rejected end() instead of leaving it as an unhandled rejection', async () => {
+      const env = { ...validEnv, HYPERDRIVE: hyperdrive(DEFAULT_CONNECTION_STRING) };
+      const auth = createAuth(env, { database: { hyperdrive: env.HYPERDRIVE } });
+      expect(capturedPools).toHaveLength(1);
+      const pool = capturedPools[0];
+      pool.end = mock(() => Promise.reject(new Error('socket dropped')));
+
+      const errors: unknown[][] = [];
+      const unhandled: unknown[] = [];
+      const originalError = console.error;
+      const onUnhandled = (event: PromiseRejectionEvent) => {
+        unhandled.push(event.reason);
+        event.preventDefault();
+      };
+      console.error = (...args: unknown[]) => {
+        errors.push(args);
+      };
+      addEventListener('unhandledrejection', onUnhandled);
+      try {
+        await auth.handler(new Request(`${VALID_BASE_URL}/api/auth/ok`));
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      } finally {
+        console.error = originalError;
+        removeEventListener('unhandledrejection', onUnhandled);
+      }
+
+      expect(unhandled).toHaveLength(0);
+      expect(errors.some((args) => String(args[0]).includes('failed to release the pg Pool'))).toBe(
+        true
+      );
+    });
+  });
+
   describe('pg driver is required', () => {
     it('throws a clear error at creation when neither database.pg nor a loadable pg module provides a Pool', () => {
       const env = { ...validEnv, HYPERDRIVE: hyperdrive(DEFAULT_CONNECTION_STRING) };

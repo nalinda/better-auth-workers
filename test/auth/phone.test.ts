@@ -323,6 +323,22 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
       expect(customPlugin?.options?.allowedAttempts).toBe(5);
     });
 
+    it('treats a key set to undefined like an omitted key, keeping the package default', () => {
+      const auth = createAuth(validEnv, {
+        phone: {
+          sendOTP: async () => {},
+          otpLength: undefined,
+          signUpOnVerification: undefined,
+        },
+      });
+
+      const phonePlugin = auth.options.plugins?.find((p) => p.id === 'phone-number');
+      expect(phonePlugin?.options?.otpLength).toBe(6);
+      const signUp = phonePlugin?.options?.signUpOnVerification as
+        { getTempEmail: (phoneNumber: string) => string } | undefined;
+      expect(signUp?.getTempEmail('+15551234567')).toBe('+15551234567@phone.invalid');
+    });
+
     it('signs up an unknown phone number on first verification with a placeholder email, overridable', () => {
       const auth = createAuth(validEnv, {
         phone: {

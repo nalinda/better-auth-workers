@@ -33,6 +33,14 @@ export function loadPgPoolClass(): (new (config: PgPoolConfig) => PgPool) | unde
 const POOL_ALREADY_RELEASED_MESSAGE =
   'better-auth-workers: this Hyperdrive-backed instance has already served a request and released its pool. Call createAuth(env, options) again for each request; the Hyperdrive path is not memoised.';
 
+async function releasePool(pool: PgPool): Promise<void> {
+  try {
+    await pool.end();
+  } catch (error) {
+    console.error('better-auth-workers: failed to release the pg Pool', error);
+  }
+}
+
 // Ends the pool after the response through waitUntil when an execution context
 // is available, otherwise on the next tick so it never blocks the response.
 // The pool is released exactly once: a second `handler` call on the same
@@ -53,8 +61,10 @@ export function withPoolLifecycle(instance: HandlerHost, pool: PgPool, ctxRef: C
       if (execCtx && typeof execCtx.waitUntil === 'function') {
         execCtx.waitUntil(pool.end());
       } else {
+        // Without a context nothing logs a failed end() for us (waitUntil
+        // reports its own rejections); log it rather than leave it unhandled.
         setTimeout(() => {
-          void pool.end();
+          void releasePool(pool);
         }, 0);
       }
     }

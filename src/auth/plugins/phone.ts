@@ -16,6 +16,16 @@ const SIGN_UP_ON_VERIFICATION = {
   getTempName: (phoneNumber: string) => phoneNumber,
 };
 
+// A key the consumer set to `undefined` (`signUpOnVerification: undefined`,
+// say) must fall back to the package default like an omitted key, not
+// clobber it — for sign-up that would silently disable user creation on
+// first verify and surface only as "user not found".
+function withoutUndefined<T extends object>(value: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, field]) => field !== undefined)
+  ) as Partial<T>;
+}
+
 function isValidE164(phoneNumber: string): boolean {
   return E164_REGEX.test(phoneNumber);
 }
@@ -31,7 +41,7 @@ export function buildPhonePlugin(
     allowedAttempts: 3,
     phoneNumberValidator: isValidE164,
     signUpOnVerification: SIGN_UP_ON_VERIFICATION,
-    ...phoneOpts,
+    ...withoutUndefined(phoneOpts),
     sendOTP: (data, ctx) => {
       if (!isValidE164(data.phoneNumber)) {
         return;
