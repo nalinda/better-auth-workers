@@ -8,7 +8,14 @@ dist/
 *.tsbuildinfo
 coverage/
 
-# dev-harness: agent tooling stays out of git; each machine runs /dev-harness:setup
+# AI/agent tooling stays out of git; each machine runs /dev-harness:setup
 .agents/
 .claude/
 .worktrees/
+AGENTS.md
+CLAUDE.md
+.cursor/
+.cursorrules
+.windsurf/
+.windsurfrules
+.mcp.json
