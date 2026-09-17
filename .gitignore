@@ -4,3 +4,11 @@ dist/
 .dev.vars
 *.log
 .DS_Store
+.eslintcache
+*.tsbuildinfo
+coverage/
+
+# dev-harness: agent tooling stays out of git; each machine runs /dev-harness:setup
+.agents/
+.claude/
+.worktrees/

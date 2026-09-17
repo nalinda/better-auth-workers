@@ -80,17 +80,17 @@ A Worker that serves `/auth/*` with phone OTP and Google sign-in, backed by Post
   "compatibility_flags": ["nodejs_compat"],
   "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<hyperdrive-id>" }],
   "kv_namespaces": [{ "binding": "AUTH_KV", "id": "<kv-id>" }],
-  "vars": { "AUTH_BASE_URL": "https://example.com" }
+  "vars": { "AUTH_BASE_URL": "https://example.com" },
 }
 ```
 
 Secrets, set with `wrangler secret put`:
 
-| Secret | Purpose |
-| --- | --- |
-| `BETTER_AUTH_SECRET` | Signs cookies and tokens. 32+ random bytes. |
-| `GOOGLE_CLIENT_ID` | Google OAuth client id. |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret. |
+| Secret                 | Purpose                                     |
+| ---------------------- | ------------------------------------------- |
+| `BETTER_AUTH_SECRET`   | Signs cookies and tokens. 32+ random bytes. |
+| `GOOGLE_CLIENT_ID`     | Google OAuth client id.                     |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret.                 |
 
 **src/index.ts**
 
@@ -147,19 +147,19 @@ await authClient.phoneNumber.verify({ phoneNumber: '+94771234567', code: '123456
 
 `createAuth(env, options)` returns a Better Auth instance. The instance is memoised on `env`, so calling it on every request is free after the first call in an isolate.
 
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `basePath` | `string` | `'/api/auth'` | Path prefix the Worker serves Better Auth under. |
-| `baseURL` | `string` | `env.AUTH_BASE_URL` | Public origin used for callbacks and cookies. |
-| `secret` | `string` | `env.BETTER_AUTH_SECRET` | Signing secret. |
-| `database` | `{ hyperdrive: Hyperdrive } \| { d1: D1Database }` | required | Primary store. See [Storage](#storage). |
-| `kv` | `KVNamespace` | required | Secondary storage for session cache and rate limiting. |
-| `phone` | `{ sendOTP, otpLength?, expiresIn?, allowedAttempts? }` | off | Enables the phone-number plugin. See [Phone OTP](#phone-otp). |
-| `google` | `boolean \| { clientId, clientSecret }` | off | Enables Google sign-in. `true` reads the secrets from `env`. |
-| `bearer` | `boolean` | `false` | Enables the bearer plugin for non-browser clients. |
-| `allowedMethods` | `Array<'phone' \| 'google' \| 'magic-link'>` | all enabled | Rejects sign-in attempts through any other method. |
-| `plugins` | `BetterAuthPlugin[]` | `[]` | Extra Better Auth plugins, appended after the built-in ones. |
-| `betterAuth` | `Partial<BetterAuthOptions>` | `{}` | Escape hatch. Merged last, so it can override anything above. |
+| Option           | Type                                                    | Default                  | Description                                                   |
+| ---------------- | ------------------------------------------------------- | ------------------------ | ------------------------------------------------------------- |
+| `basePath`       | `string`                                                | `'/api/auth'`            | Path prefix the Worker serves Better Auth under.              |
+| `baseURL`        | `string`                                                | `env.AUTH_BASE_URL`      | Public origin used for callbacks and cookies.                 |
+| `secret`         | `string`                                                | `env.BETTER_AUTH_SECRET` | Signing secret.                                               |
+| `database`       | `{ hyperdrive: Hyperdrive } \| { d1: D1Database }`      | required                 | Primary store. See [Storage](#storage).                       |
+| `kv`             | `KVNamespace`                                           | required                 | Secondary storage for session cache and rate limiting.        |
+| `phone`          | `{ sendOTP, otpLength?, expiresIn?, allowedAttempts? }` | off                      | Enables the phone-number plugin. See [Phone OTP](#phone-otp). |
+| `google`         | `boolean \| { clientId, clientSecret }`                 | off                      | Enables Google sign-in. `true` reads the secrets from `env`.  |
+| `bearer`         | `boolean`                                               | `false`                  | Enables the bearer plugin for non-browser clients.            |
+| `allowedMethods` | `Array<'phone' \| 'google' \| 'magic-link'>`            | all enabled              | Rejects sign-in attempts through any other method.            |
+| `plugins`        | `BetterAuthPlugin[]`                                    | `[]`                     | Extra Better Auth plugins, appended after the built-in ones.  |
+| `betterAuth`     | `Partial<BetterAuthOptions>`                            | `{}`                     | Escape hatch. Merged last, so it can override anything above. |
 
 Everything not listed is Better Auth's default. Session lifetime, cookie attributes, OTP length and attempts are all Better Auth's defaults unless you change them through `phone` or `betterAuth`.
 
@@ -168,7 +168,9 @@ Everything not listed is Better Auth's default. Session lifetime, cookie attribu
 ### Postgres through Hyperdrive
 
 ```ts
-database: { hyperdrive: env.HYPERDRIVE }
+database: {
+  hyperdrive: env.HYPERDRIVE;
+}
 ```
 
 A `pg` Pool is created per request from `env.HYPERDRIVE.connectionString` with a small `max`, handed to Better Auth, and ended after the response through `waitUntil`. Better Auth talks to it through its bundled Kysely dialect; you never write a query.
@@ -178,7 +180,9 @@ Hyperdrive keeps the real connections warm on Cloudflare's side, so per-request 
 ### D1
 
 ```ts
-database: { d1: env.DB }
+database: {
+  d1: env.DB;
+}
 ```
 
 Better Auth's D1 dialect is used directly. D1 has a free tier that comfortably covers a small application's auth traffic, so a Worker that has no other database can still run full auth.
@@ -235,7 +239,7 @@ Service-binding calls stay inside Cloudflare's network and never traverse the pu
 ## Google sign-in
 
 ```ts
-google: true
+google: true;
 ```
 
 reads `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` from `env`. Pass an object to supply them explicitly. Register `<baseURL><basePath>/callback/google` as an authorised redirect URI in the Google Cloud console.
@@ -245,7 +249,7 @@ reads `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` from `env`. Pass an object t
 Some deployments should accept only some methods. An internal admin app might allow Google and nothing else, even though the same package is configured with phone OTP elsewhere.
 
 ```ts
-allowedMethods: ['google']
+allowedMethods: ['google'];
 ```
 
 installs a `before` hook that rejects requests to any other sign-in route with `403`. The rejected routes are still mounted, so clients get a clear error rather than a `404`.
@@ -272,8 +276,8 @@ const app = new Hono<{ Bindings: Env }>();
 
 app.use('*', async (c, next) => {
   const sessions = createSessionClient({
-    auth: c.env.AUTH,          // service binding
-    kv: c.env.AUTH_KV,         // the auth Worker's KV namespace
+    auth: c.env.AUTH, // service binding
+    kv: c.env.AUTH_KV, // the auth Worker's KV namespace
     basePath: '/auth',
   });
   c.set('sessions', sessions);
@@ -308,7 +312,7 @@ Sharing the KV namespace between the two Workers is what makes step 3 work. Usin
 Enable the bearer plugin:
 
 ```ts
-bearer: true
+bearer: true;
 ```
 
 Clients then receive the session token in a `set-auth-token` response header after sign-in and send it back as `Authorization: Bearer <token>`. `createSessionClient` accepts either cookies or bearer tokens.
@@ -361,13 +365,13 @@ The `examples/hono` directory contains a runnable Worker with both storage optio
 
 ## Compatibility
 
-| Dependency | Version |
-| --- | --- |
-| better-auth | ^1.7 |
-| wrangler | ^4 |
-| Compatibility flags | `nodejs_compat` |
-| pg (Postgres only) | ^8 |
-| hono (middleware only) | ^4 |
+| Dependency             | Version         |
+| ---------------------- | --------------- |
+| better-auth            | ^1.7            |
+| wrangler               | ^4              |
+| Compatibility flags    | `nodejs_compat` |
+| pg (Postgres only)     | ^8              |
+| hono (middleware only) | ^4              |
 
 Hono is an optional peer dependency. `createAuth` and `createSessionClient` work with any framework that gives you a `Request`; only `requireSession()` needs Hono.
 

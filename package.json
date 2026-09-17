@@ -1,0 +1,32 @@
+{
+  "name": "better-auth-workers",
+  "version": "0.1.0",
+  "description": "Better Auth on Cloudflare Workers",
+  "type": "module",
+  "license": "MIT",
+  "packageManager": "bun@1.4.0",
+  "scripts": {
+    "lint": "eslint . --cache --cache-location .eslintcache --cache-strategy content",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "ts-check": "tsc --noEmit",
+    "test": "bun test",
+    "knip": "knip",
+    "prepare": "husky && bun node_modules/@serendibyte-co/eslint-config/hooks/fix-hooks-path.sh"
+  },
+  "prettier": "@serendibyte-co/prettier-config",
+  "devDependencies": {
+    "@serendibyte-co/eslint-config": "git+https://github.com/serendibyte-co/eslint-config.git#v1.4.1",
+    "@serendibyte-co/prettier-config": "git+https://github.com/serendibyte-co/prettier-config.git#v1.0.2",
+    "@types/bun": "^1.4.0",
+    "eslint": "^10.8.1",
+    "husky": "^9.1.7",
+    "knip": "^6.32.2",
+    "lint-staged": "^17.3.0",
+    "prettier": "^3.9.6",
+    "typescript": "~6.0.2"
+  },
+  "trustedDependencies": [
+    "unrs-resolver"
+  ]
+}

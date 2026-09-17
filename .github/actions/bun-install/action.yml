@@ -1,0 +1,34 @@
+name: Bun install
+description: >-
+  Set up Bun, restore the dependency cache, and run a frozen install.
+  Shared by every job that needs node_modules.
+
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: 1.4.0
+
+    - name: Cache node_modules
+      id: node-modules
+      uses: actions/cache@v6
+      with:
+        path: node_modules
+        # Exact lockfile match only. On a hit the global bun cache is not
+        # restored and `bun install` just verifies the tree.
+        key: ${{ runner.os }}-node-modules-${{ hashFiles('bun.lock') }}
+
+    - name: Cache bun download cache
+      # Only needed to populate/refresh node_modules on a miss.
+      if: steps.node-modules.outputs.cache-hit != 'true'
+      uses: actions/cache@v6
+      with:
+        path: ~/.bun/install/cache
+        key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-bun-
+
+    - name: Install dependencies
+      shell: bash
+      run: bun install --frozen-lockfile

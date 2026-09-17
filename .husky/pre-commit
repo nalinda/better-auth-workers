@@ -1,0 +1,11 @@
+bunx lint-staged
+# Guarded: this script is purely informational and always exits 0 on its
+# own, but a missing path on a fresh clone before `bun install` would
+# otherwise crash instead of just skipping the report.
+if [ -f node_modules/@serendibyte-co/eslint-config/hooks/report-remaining-lint.js ]; then
+  bun node_modules/@serendibyte-co/eslint-config/hooks/report-remaining-lint.js
+fi
+
+# Blocks the commit: whole-project analysis, not staged-files-only, since an
+# unused export/dep isn't visible from a diff of the files that changed it.
+bun run knip

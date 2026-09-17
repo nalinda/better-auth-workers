@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/bun-install
+
+      - name: Cache ESLint
+        uses: actions/cache@v6
+        with:
+          path: .eslintcache
+          key: ${{ runner.os }}-eslint-${{ hashFiles('eslint.config.js') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-eslint-${{ hashFiles('eslint.config.js') }}-
+            ${{ runner.os }}-eslint-
+
+      - name: Lint
+        run: bun run lint
+
+  types:
+    name: Type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/bun-install
+
+      - name: Cache tsc build info
+        uses: actions/cache@v6
+        with:
+          path: tsconfig.tsbuildinfo
+          key: ${{ runner.os }}-tsc-${{ hashFiles('bun.lock', 'tsconfig*.json') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-tsc-${{ hashFiles('bun.lock', 'tsconfig*.json') }}-
+            ${{ runner.os }}-tsc-
+
+      - name: Type check
+        run: bun run ts-check
+
+  format-and-audit:
+    name: Format & Knip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/bun-install
+
+      - name: Format check
+        run: bun run format:check
+
+      - name: Knip (unused files/exports/deps)
+        run: bun run knip
+
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/bun-install
+
+      - name: Test
+        run: bun run test
