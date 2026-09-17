@@ -27,6 +27,17 @@ jobs:
       - name: Test
         run: bun run test
 
+      # A tag that does not match package.json would either fail publish
+      # obscurely (duplicate version) or ship the wrong version under it.
+      - name: Check the tag matches package.json
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(bun -e "console.log(require('./package.json').version)")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error title=Version mismatch::tag ${GITHUB_REF_NAME} is version ${TAG_VERSION}, but package.json is ${PKG_VERSION}"
+            exit 1
+          fi
+
       - name: Generate release notes
         id: release-notes
         run: |

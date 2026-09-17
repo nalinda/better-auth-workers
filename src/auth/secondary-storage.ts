@@ -29,40 +29,58 @@ const MAX_SHADOWED_KEYS = 1000;
 
 interface ShadowCounter extends RateLimitCounter {
   lastWriteAt: number;
+  // Increments made here since this isolate last synced with KV.
+  pending: number;
 }
 
 function createCounters(kv: KVStore) {
   const shadow = new BoundedMap<string, ShadowCounter>(MAX_SHADOWED_KEYS);
   const chains = new Map<string, Promise<number>>();
 
-  async function load(key: string, now: number): Promise<ShadowCounter | undefined> {
-    const local = shadow.get(key);
-    if (local && local.expiresAt > now) return local;
+  async function readStored(key: string, now: number): Promise<RateLimitCounter | undefined> {
     const stored = parseCounter(await kv.get(key));
-    return stored && stored.expiresAt > now ? { ...stored, lastWriteAt: 0 } : undefined;
+    return stored && stored.expiresAt > now ? stored : undefined;
   }
 
-  async function writeThrough(key: string, entry: ShadowCounter, now: number): Promise<void> {
+  // Other isolates count the same key against the same KV entry. A write
+  // therefore merges: KV's current count plus this isolate's increments
+  // since its last sync, so concurrently active isolates converge on the
+  // true shared total instead of the last writer's own count winning.
+  async function writeThrough(key: string, entry: ShadowCounter, now: number, isSynced: boolean) {
     if (now - entry.lastWriteAt < WRITE_INTERVAL_MS) return;
+    if (!isSynced) {
+      const stored = await readStored(key, now);
+      if (stored) {
+        entry.count = stored.count + entry.pending;
+        entry.expiresAt = stored.expiresAt;
+      }
+    }
     try {
       await kv.put(key, JSON.stringify(entry), kvExpiry((entry.expiresAt - now) / 1000));
       entry.lastWriteAt = now;
+      entry.pending = 0;
     } catch {
       // Refused (rate-limited) or failed: the shadow keeps counting and
-      // the next increment past the interval writes again.
+      // the next increment past the interval merges and writes again.
     }
   }
 
   async function incrementOnce(key: string, ttl: number): Promise<number> {
     const now = Date.now();
-    const entry = (await load(key, now)) ?? {
-      count: 0,
-      expiresAt: now + Math.max(ttl, 1) * 1000,
-      lastWriteAt: 0,
-    };
+    let entry = shadow.get(key);
+    let isSynced = false;
+    if (!entry || entry.expiresAt <= now) {
+      const stored = await readStored(key, now);
+      entry = stored
+        ? { ...stored, lastWriteAt: 0, pending: 0 }
+        : { count: 0, expiresAt: now + Math.max(ttl, 1) * 1000, lastWriteAt: 0, pending: 0 };
+      // Freshly read: the entry already reflects KV, no second read needed.
+      isSynced = true;
+    }
     entry.count += 1;
+    entry.pending += 1;
     shadow.set(key, entry);
-    await writeThrough(key, entry, now);
+    await writeThrough(key, entry, now, isSynced);
     return entry.count;
   }
 
@@ -79,9 +97,13 @@ function createCounters(kv: KVStore) {
         return incrementOnce(key, ttl);
       })();
       chains.set(key, next);
-      void next.finally(() => {
+      // The cleanup chain must never reject on its own: the caller already
+      // sees `next`'s rejection, and a second unhandled one would surface
+      // as a spurious error per throttled request during a KV outage.
+      const cleanup = () => {
         if (chains.get(key) === next) chains.delete(key);
-      });
+      };
+      void next.then(cleanup).catch(cleanup);
       return next;
     },
   };

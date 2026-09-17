@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, setSystemTime } from 'bun:test';
 
-import { type AuthInstance, createAuth } from '../../src/index';
+import { type AuthInstance, createAuth, type KVStore } from '../../src/index';
 import { buildEnv, FakeKV, VALID_BASE_URL } from '../helpers/auth';
 
 type SecondaryStorage = NonNullable<AuthInstance['options']['secondaryStorage']>;
@@ -289,6 +289,68 @@ describe('KV secondary storage for session cache and rate limiter', () => {
       expect(await second.increment('rate:shared', 60)).toBe(2);
       expect(kv.puts.filter((put) => put.key === 'rate:shared')).toHaveLength(1);
       expect(kv.refused).toHaveLength(0);
+    });
+
+    it('merges with KV on write-through, so concurrent isolates converge on the shared total', async () => {
+      // Two isolates: separate shadows (a distinct KVStore object each, so
+      // the per-binding shadow is not shared) over one underlying KV.
+      const kv = new FakeKV();
+      const asIsolateBinding = (): KVStore => ({
+        get: (key) => kv.get(key),
+        put: (key, value, options) => kv.put(key, value, options),
+        delete: (key) => kv.delete(key),
+      });
+      const isolateA = secondaryStorageOf(createAuth(buildEnv(), { kv: asIsolateBinding() }));
+      const isolateB = secondaryStorageOf(createAuth(buildEnv(), { kv: asIsolateBinding() }));
+      const start = new Date('2026-09-17T12:00:00Z');
+      const at = (ms: number) => setSystemTime(new Date(start.getTime() + ms));
+      try {
+        at(0);
+        await isolateA.increment('rate:shared', 60); // A: 1, written
+        at(200);
+        await isolateB.increment('rate:shared', 60); // B reads 1 -> 2, written
+        at(500);
+        await isolateA.increment('rate:shared', 60); // A: local 2, pending 1 (coalesced)
+        at(800);
+        await isolateA.increment('rate:shared', 60); // A: local 3, pending 2 (coalesced)
+        at(1200);
+        // A syncs: KV holds 2 (B's write) + A's 2 pending = 4, not A's own 3.
+        expect(await isolateA.increment('rate:shared', 60)).toBe(5);
+        at(1500);
+        // B syncs: KV holds 5 + B's 1 pending = 6: the true total of 6 increments.
+        expect(await isolateB.increment('rate:shared', 60)).toBe(6);
+      } finally {
+        setSystemTime();
+      }
+
+      const stored = JSON.parse(kv.store.get('rate:shared') ?? '{}') as { count: number };
+      expect(stored.count).toBe(6);
+    });
+
+    it('does not leave an unhandled rejection behind when KV reads fail', async () => {
+      const kv = new FakeKV();
+      kv.get = () => Promise.reject(new Error('KV GET failed: 500'));
+      const storage = secondaryStorageOf(createAuth(buildEnv(), { kv }));
+      const unhandled: unknown[] = [];
+      const onUnhandled = (event: PromiseRejectionEvent) => {
+        unhandled.push(event.reason);
+        event.preventDefault();
+      };
+      addEventListener('unhandledrejection', onUnhandled);
+      try {
+        let thrown: unknown;
+        try {
+          await storage.increment('rate:outage', 60);
+        } catch (error) {
+          thrown = error;
+        }
+        expect((thrown as Error).message).toMatch(/KV GET failed/);
+        // Let any derived promise settle before checking.
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      } finally {
+        removeEventListener('unhandledrejection', onUnhandled);
+      }
+      expect(unhandled).toHaveLength(0);
     });
 
     it('writes through again once the interval has passed', async () => {

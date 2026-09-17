@@ -94,6 +94,25 @@ describe('Release workflow', () => {
     expect(testStep).toBeDefined();
   });
 
+  it('fails before drafting or publishing when the tag does not match package.json', () => {
+    const workflow = readReleaseWorkflow();
+    const steps = workflow?.jobs?.release?.steps ?? [];
+    const guardIndex = steps.findIndex(
+      (s) => (s.run ?? '').includes('GITHUB_REF_NAME') && (s.run ?? '').includes('package.json')
+    );
+    const draftIndex = steps.findIndex((s) => (s.run ?? '').includes('gh release create'));
+    const publishIndex = steps.findIndex((s) =>
+      (s.run ?? '').split('\n').some((line) => line.trimStart().startsWith('npm publish'))
+    );
+    expect(guardIndex).toBeGreaterThan(-1);
+    expect(guardIndex).toBeLessThan(draftIndex);
+    expect(guardIndex).toBeLessThan(publishIndex);
+    const guardStep = steps.at(guardIndex);
+    expect(guardStep?.run).toMatch(/exit 1/);
+    expect(guardStep?.run).toMatch(/version/i);
+    expect(guardStep?.if).toBeUndefined();
+  });
+
   it('extracts release notes and drafts GitHub release', () => {
     const workflow = readReleaseWorkflow();
     const steps = workflow?.jobs?.release?.steps ?? [];
