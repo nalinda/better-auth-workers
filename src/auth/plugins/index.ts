@@ -4,6 +4,8 @@ import { admin, bearer } from 'better-auth/plugins';
 import type { CreateAuthOptions } from '../options';
 import { buildPhonePlugin } from './phone';
 
+export { buildSocialProviders } from './google';
+
 export function buildPlugins(options?: CreateAuthOptions): BetterAuthPlugin[] {
   const plugins: BetterAuthPlugin[] = [admin()];
   const phonePlugin = buildPhonePlugin(options?.phone, options?.ctx);

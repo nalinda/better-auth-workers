@@ -6,7 +6,7 @@ import { buildRateLimitConfig, buildSessionConfig } from './config';
 import { buildDatabase, resolveHyperdriveConnectionString } from './database';
 import { resolveBaseURL, resolveSecret } from './env';
 import { type CreateAuthOptions, getOptionsKey, normalizeArgs } from './options';
-import { buildPlugins } from './plugins';
+import { buildPlugins, buildSocialProviders } from './plugins';
 import { withPoolLifecycle } from './postgres-pool';
 import { buildSecondaryStorage } from './secondary-storage';
 
@@ -47,6 +47,7 @@ export function createAuth(
   const baseURL = resolveBaseURL(options, env);
   const secret = resolveSecret(options, env);
   const plugins = buildPlugins(options);
+  const socialProviders = buildSocialProviders(options, env);
   const secondaryStorage = buildSecondaryStorage(options, env);
   const { database, pool } = buildDatabase(options, env);
   const session = buildSessionConfig(options);
@@ -68,6 +69,7 @@ export function createAuth(
     secret,
     ...(database !== undefined && { database }),
     ...(secondaryStorage !== undefined && { secondaryStorage }),
+    ...(socialProviders !== undefined && { socialProviders }),
     plugins,
     ...options?.betterAuth,
     session,
