@@ -29,7 +29,7 @@ const OPTION_KEYS = new Set([
 
 function isOptionsLike(obj: object | undefined): obj is CreateAuthOptions {
   if (!obj) return false;
-  if ('database' in obj || 'phone' in obj || 'bearer' in obj) return true;
+  if ('database' in obj || 'phone' in obj || 'magicLink' in obj || 'bearer' in obj) return true;
   return Object.keys(obj).some((key) => OPTION_KEYS.has(key));
 }
 

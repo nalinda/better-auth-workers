@@ -9,6 +9,15 @@ export interface CreateAuthPhoneOptions {
   allowedAttempts?: number;
 }
 
+export interface CreateAuthMagicLinkOptions {
+  sendMagicLink: (
+    args: { email: string; url: string; token: string; metadata?: Record<string, ConfigValue> },
+    request?: Request
+  ) => Promise<void> | void;
+  expiresIn?: number;
+  disableSignUp?: boolean;
+}
+
 export type HyperdriveDatabaseOption =
   Hyperdrive | { connectionString: string; [key: string]: ConfigValue };
 
@@ -54,6 +63,7 @@ export interface CreateAuthOptions {
   secondaryStorage?: CreateAuthSecondaryStorage;
   ctx?: ExecutionContext;
   phone?: CreateAuthPhoneOptions;
+  magicLink?: CreateAuthMagicLinkOptions;
   google?: boolean | { clientId: string; clientSecret: string };
   bearer?: boolean;
   allowedMethods?: Array<'phone' | 'google' | 'magic-link'>;

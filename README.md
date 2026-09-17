@@ -23,6 +23,7 @@ It's a thin layer. Better Auth's options, plugins and clients still work the sam
 - [Sessions and rate limiting on KV](#sessions-and-rate-limiting-on-kv)
 - [Phone OTP](#phone-otp)
 - [Google sign-in](#google-sign-in)
+- [Magic link sign-in](#magic-link-sign-in)
 - [Restricting sign-in methods](#restricting-sign-in-methods)
 - [Using sessions from another Worker](#using-sessions-from-another-worker)
 - [Non-browser clients](#non-browser-clients)
@@ -153,19 +154,20 @@ await authClient.phoneNumber.verify({ phoneNumber: '+94771234567', code: '123456
 
 `createAuth(env, options)` returns a Better Auth instance. The instance is memoised on `env`, so calling it on every request is free after the first call in an isolate.
 
-| Option           | Type                                                    | Default                  | Description                                                   |
-| ---------------- | ------------------------------------------------------- | ------------------------ | ------------------------------------------------------------- |
-| `basePath`       | `string`                                                | `'/api/auth'`            | Path prefix the Worker serves Better Auth under.              |
-| `baseURL`        | `string`                                                | `env.AUTH_BASE_URL`      | Public origin used for callbacks and cookies.                 |
-| `secret`         | `string`                                                | `env.BETTER_AUTH_SECRET` | Signing secret.                                               |
-| `database`       | `{ hyperdrive: Hyperdrive } \| { d1: D1Database }`      | required                 | Primary store. See [Storage](#storage).                       |
-| `kv`             | `KVNamespace`                                           | required                 | Secondary storage for session cache and rate limiting.        |
-| `phone`          | `{ sendOTP, otpLength?, expiresIn?, allowedAttempts? }` | off                      | Enables the phone-number plugin. See [Phone OTP](#phone-otp). |
-| `google`         | `boolean \| { clientId, clientSecret }`                 | off                      | Enables Google sign-in. `true` reads the secrets from `env`.  |
-| `bearer`         | `boolean`                                               | `false`                  | Enables the bearer plugin for non-browser clients.            |
-| `allowedMethods` | `Array<'phone' \| 'google' \| 'magic-link'>`            | all enabled              | Rejects sign-in attempts through any other method.            |
-| `plugins`        | `BetterAuthPlugin[]`                                    | `[]`                     | Extra Better Auth plugins, appended after the built-in ones.  |
-| `betterAuth`     | `Partial<BetterAuthOptions>`                            | `{}`                     | Escape hatch. Merged last, so it can override anything above. |
+| Option           | Type                                                    | Default                  | Description                                                                |
+| ---------------- | ------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------- |
+| `basePath`       | `string`                                                | `'/api/auth'`            | Path prefix the Worker serves Better Auth under.                           |
+| `baseURL`        | `string`                                                | `env.AUTH_BASE_URL`      | Public origin used for callbacks and cookies.                              |
+| `secret`         | `string`                                                | `env.BETTER_AUTH_SECRET` | Signing secret.                                                            |
+| `database`       | `{ hyperdrive: Hyperdrive } \| { d1: D1Database }`      | required                 | Primary store. See [Storage](#storage).                                    |
+| `kv`             | `KVNamespace`                                           | required                 | Secondary storage for session cache and rate limiting.                     |
+| `phone`          | `{ sendOTP, otpLength?, expiresIn?, allowedAttempts? }` | off                      | Enables the phone-number plugin. See [Phone OTP](#phone-otp).              |
+| `google`         | `boolean \| { clientId, clientSecret }`                 | off                      | Enables Google sign-in. `true` reads the secrets from `env`.               |
+| `magicLink`      | `{ sendMagicLink, expiresIn?, disableSignUp? }`         | off                      | Enables magic-link sign-in. See [Magic link sign-in](#magic-link-sign-in). |
+| `bearer`         | `boolean`                                               | `false`                  | Enables the bearer plugin for non-browser clients.                         |
+| `allowedMethods` | `Array<'phone' \| 'google' \| 'magic-link'>`            | all enabled              | Rejects sign-in attempts through any other method.                         |
+| `plugins`        | `BetterAuthPlugin[]`                                    | `[]`                     | Extra Better Auth plugins, appended after the built-in ones.               |
+| `betterAuth`     | `Partial<BetterAuthOptions>`                            | `{}`                     | Escape hatch. Merged last, so it can override anything above.              |
 
 Everything not listed is Better Auth's default. Session lifetime, cookie attributes, OTP length and attempts are all Better Auth's defaults unless you change them through `phone` or `betterAuth`.
 
@@ -251,6 +253,27 @@ google: true;
 reads `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` from `env`. To supply them explicitly instead, pass an object with `clientId` and `clientSecret`.
 
 In the Google Cloud console, register `<baseURL><basePath>/callback/google` as an authorised redirect URI.
+
+## Magic link sign-in
+
+Enabling `magicLink` turns on Better Auth's magic-link plugin. You supply delivery; the package supplies everything else.
+
+```ts
+magicLink: {
+  sendMagicLink: async ({ email, url, token }, request) => {
+    // deliver however you like: transactional email, a service binding
+  },
+  expiresIn: 300,       // seconds, default 300
+  disableSignUp: false, // default false
+}
+```
+
+Here's what the package does around your function:
+
+- Runs it under `ctx.waitUntil`, so the sign-in response returns right away. Delivery time can't be used to guess whether an email address is registered.
+- Sends delivery failures to the Worker's logs, never to the client response.
+
+No secrets are required beyond the ones already needed for `baseURL` and `secret` — configuration for magic-link sign-in lives entirely in `magicLink`, same as `phone`.
 
 ## Restricting sign-in methods
 
