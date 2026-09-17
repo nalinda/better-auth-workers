@@ -40,4 +40,14 @@ export default [
       '@typescript-eslint/no-restricted-types': 'off',
     },
   },
+  {
+    // Test files legitimately run long — a suite covering many scenarios for
+    // one function reads better kept together than split just to satisfy a
+    // line-count ceiling.
+    files: ['test/**/*.ts'],
+    rules: {
+      'sonarjs/max-lines': 'off',
+      'sonarjs/max-lines-per-function': 'off',
+    },
+  },
 ];
