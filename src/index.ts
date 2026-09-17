@@ -8,6 +8,14 @@ export type AuthEnv = Record<
   string | KVNamespace | Hyperdrive | D1Database | Fetcher | boolean | number | object | undefined
 >;
 
+export interface ExecutionContext {
+  waitUntil(promise: Promise<void | Response>): void;
+  passThroughOnException?(): void;
+}
+
+export type ConfigValue =
+  string | number | boolean | object | ((...args: never[]) => Promise<void> | void) | undefined;
+
 export interface CreateAuthPhoneOptions {
   sendOTP: (args: { phoneNumber: string; code: string }, request?: Request) => Promise<void> | void;
   otpLength?: number;
@@ -15,8 +23,11 @@ export interface CreateAuthPhoneOptions {
   allowedAttempts?: number;
 }
 
+export type HyperdriveDatabaseOption =
+  Hyperdrive | { connectionString: string; [key: string]: ConfigValue };
+
 export interface CreateAuthDatabaseOptions {
-  hyperdrive?: Hyperdrive | Record<string, string | number | boolean>;
+  hyperdrive?: HyperdriveDatabaseOption;
   d1?: D1Database | Record<string, (arg?: string) => void>;
 }
 
@@ -39,14 +50,14 @@ export interface CreateAuthOptions {
   database?: CreateAuthDatabaseOptions;
   kv?: KVStore;
   secondaryStorage?: CreateAuthSecondaryStorage;
+  ctx?: ExecutionContext;
   phone?: CreateAuthPhoneOptions;
   google?: boolean | { clientId: string; clientSecret: string };
   bearer?: boolean;
   allowedMethods?: Array<'phone' | 'google' | 'magic-link'>;
   plugins?: BetterAuthPlugin[];
-  betterAuth?: Record<string, string | number | boolean | object | undefined>;
-  [key: string]:
-    string | number | boolean | object | ((...args: never[]) => Promise<void> | void) | undefined;
+  betterAuth?: Record<string, ConfigValue>;
+  [key: string]: ConfigValue;
 }
 
 export type AuthInstance = ReturnType<typeof betterAuth>;
@@ -55,7 +66,13 @@ const instanceCache = new WeakMap<object, Map<string, AuthInstance>>();
 
 function getOptionsKey(options?: CreateAuthOptions): string {
   if (!options || Object.keys(options).length === 0) return '{}';
-  return JSON.stringify(options);
+  return JSON.stringify(
+    options,
+    (key: string, value: string | number | boolean | object | null | undefined) => {
+      if (key === 'ctx') return;
+      return value;
+    }
+  );
 }
 
 function resolveBaseURL(options?: CreateAuthOptions, envObj?: AuthEnv): string {
@@ -116,13 +133,91 @@ function buildSecondaryStorage(options?: CreateAuthOptions, envObj?: AuthEnv) {
   };
 }
 
-function buildDatabase(options?: CreateAuthOptions, envObj?: AuthEnv) {
+type PgPoolConfig = {
+  connectionString?: string;
+  max?: number;
+  [key: string]: ConfigValue;
+};
+
+interface PgPool {
+  end(): Promise<void>;
+  [key: string]: ConfigValue;
+}
+
+interface PgModule {
+  Pool: new (config: PgPoolConfig) => PgPool;
+  default?: {
+    Pool: new (config: PgPoolConfig) => PgPool;
+  };
+}
+
+function loadPgPoolClass(): (new (config: PgPoolConfig) => PgPool) | undefined {
+  try {
+    const req = typeof require === 'function' ? require : undefined;
+    const pg = req ? (req('pg') as PgModule) : undefined;
+    return pg?.Pool ?? pg?.default?.Pool;
+  } catch {
+    return;
+  }
+}
+
+function resolveHyperdriveConnectionString(
+  options?: CreateAuthOptions,
+  envObj?: AuthEnv
+): string | undefined {
+  const hyperdriveOption = options?.database?.hyperdrive;
+  if (
+    hyperdriveOption &&
+    typeof hyperdriveOption === 'object' &&
+    'connectionString' in hyperdriveOption &&
+    typeof hyperdriveOption.connectionString === 'string'
+  ) {
+    return hyperdriveOption.connectionString;
+  }
   if (options?.database !== undefined) {
-    return options.database;
+    return;
+  }
+  const envHyperdrive = envObj?.HYPERDRIVE as { connectionString?: string } | undefined;
+  if (
+    envHyperdrive &&
+    typeof envHyperdrive === 'object' &&
+    typeof envHyperdrive.connectionString === 'string'
+  ) {
+    return envHyperdrive.connectionString;
+  }
+}
+
+function buildDatabase(
+  options?: CreateAuthOptions,
+  envObj?: AuthEnv
+): {
+  database:
+    | CreateAuthDatabaseOptions
+    | PgPool
+    | { d1: D1Database | Record<string, (arg?: string) => void> }
+    | undefined;
+  pool?: PgPool;
+} {
+  const connectionString = resolveHyperdriveConnectionString(options, envObj);
+  if (connectionString) {
+    const PoolClass = loadPgPoolClass();
+    if (PoolClass) {
+      const pool = new PoolClass({
+        connectionString,
+        max: 5,
+      });
+      return { database: pool, pool };
+    }
+  }
+
+  if (options?.database !== undefined) {
+    return { database: options.database };
   }
   if (envObj?.DB) {
-    return { d1: envObj.DB };
+    return { database: { d1: envObj.DB as D1Database } };
   }
+
+  return { database: undefined };
 }
 
 function getCachedInstance(env: object, optionsKey: string): AuthInstance | undefined {
@@ -139,18 +234,21 @@ function setCachedInstance(env: object, optionsKey: string, instance: AuthInstan
 }
 
 export function createAuth(env: AuthEnv, options?: CreateAuthOptions): AuthInstance {
+  const isHyperdrive = Boolean(resolveHyperdriveConnectionString(options, env));
   const optionsKey = getOptionsKey(options);
 
-  const cached = getCachedInstance(env, optionsKey);
-  if (cached) {
-    return cached;
+  if (!isHyperdrive) {
+    const cached = getCachedInstance(env, optionsKey);
+    if (cached) {
+      return cached;
+    }
   }
 
   const baseURL = resolveBaseURL(options, env);
   const secret = resolveSecret(options, env);
   const plugins = buildPlugins(options);
   const secondaryStorage = buildSecondaryStorage(options, env);
-  const database = buildDatabase(options, env);
+  const { database, pool } = buildDatabase(options, env);
 
   const defaults = {
     basePath: '/api/auth',
@@ -171,7 +269,28 @@ export function createAuth(env: AuthEnv, options?: CreateAuthOptions): AuthInsta
   const instance = betterAuth(authConfig);
   void instance.$context.catch(() => {});
 
-  setCachedInstance(env, optionsKey, instance);
+  if (pool) {
+    const originalHandler = instance.handler.bind(instance);
+    instance.handler = async (request: Request, ctx?: ExecutionContext) => {
+      try {
+        const response = await originalHandler(request);
+        return response;
+      } finally {
+        const execCtx = ctx ?? options?.ctx;
+        if (execCtx && typeof execCtx.waitUntil === 'function') {
+          execCtx.waitUntil(pool.end());
+        } else {
+          setTimeout(() => {
+            void pool.end();
+          }, 0);
+        }
+      }
+    };
+  }
+
+  if (!isHyperdrive) {
+    setCachedInstance(env, optionsKey, instance);
+  }
 
   return instance;
 }
