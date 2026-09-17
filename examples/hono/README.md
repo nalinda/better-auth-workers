@@ -21,7 +21,18 @@ From repository root:
 bun install
 ```
 
-### 2. Run with D1 (SQLite)
+### 2. Provide the signing secret
+
+`BETTER_AUTH_SECRET` is a secret, so it is not in `wrangler.jsonc`. For local development copy the example file and set a value (32+ random bytes; the file is gitignored):
+
+```sh
+cp .dev.vars.example .dev.vars
+# then edit .dev.vars, e.g. BETTER_AUTH_SECRET=$(openssl rand -base64 32)
+```
+
+For a deployed Worker set it with `wrangler secret put BETTER_AUTH_SECRET` (per environment: `--env d1` or `--env hyperdrive`).
+
+### 3. Run with D1 (SQLite)
 
 Apply the package's shipped SQLite schema to your local D1 database (run from the repository root):
 
@@ -42,7 +53,7 @@ Or from within `examples/hono`:
 bun run dev:d1
 ```
 
-### 3. Run with Hyperdrive (Postgres)
+### 4. Run with Hyperdrive (Postgres)
 
 Ensure local Postgres is running (e.g. `postgresql://postgres:postgres@localhost:5432/auth_example`), then apply the package's shipped Postgres schema (run from the repository root):
 
@@ -57,7 +68,7 @@ Then start the dev server:
 bun run dev:hyperdrive
 ```
 
-### 4. Run both Workers together
+### 5. Run both Workers together
 
 The API Worker has its own config, `api.wrangler.jsonc`. Its `AUTH` service binding targets the auth Worker by its environment-specific name (`example-hono-d1` or `example-hono-hyperdrive`), and its `AUTH_KV` namespace is the auth Worker's, so a sign-out on the auth Worker is visible to the API Worker's session cache on the next request.
 

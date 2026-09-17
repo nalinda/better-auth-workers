@@ -2,9 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { getMigrations } from 'better-auth/db/migration';
-import { admin, bearer, phoneNumber } from 'better-auth/plugins';
 import { Database } from 'bun:sqlite';
 import { describe, expect, it } from 'bun:test';
+
+import { buildPlugins } from '../src/auth/plugins/index';
 
 interface PackageJson {
   name?: string;
@@ -64,14 +65,23 @@ function normalizeSql(sql: string): string {
     .join('\n');
 }
 
+// The plugin list is the package's own, with every optional sign-in method
+// enabled, so a plugin added to buildPlugins that brings its own tables
+// turns the drift check red instead of silently missing from the shipped SQL.
+function everyPackagePlugin() {
+  return buildPlugins(
+    {
+      phone: { sendOTP: () => {} },
+      magicLink: { sendMagicLink: () => {} },
+      google: { clientId: 'id', clientSecret: 'secret' },
+      bearer: true,
+    },
+    { current: undefined }
+  );
+}
+
 async function generateExpectedSchema(databaseType: 'postgres' | 'sqlite'): Promise<string> {
-  const plugins = [
-    admin(),
-    phoneNumber({
-      sendOTP: () => {},
-    }),
-    bearer(),
-  ];
+  const plugins = everyPackagePlugin();
 
   if (databaseType === 'sqlite') {
     const db = new Database(':memory:');

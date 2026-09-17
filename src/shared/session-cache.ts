@@ -15,6 +15,13 @@ export function sessionCacheKey(credential: string): string {
 // Better Auth (through better-call) signs the session cookie as
 // `<token>.<base64(HMAC-SHA256(secret, token))>`. The auth Worker rebuilds
 // that value to find the cache entry a cookie-carrying request created.
+//
+// This mirrors better-call's `signCookieValue` (better-call 1.4.0, the
+// version better-auth 1.7.5 pins; package.json pins the same version as a
+// devDependency for the test below), which is not a documented format.
+// test/shared/session-cache.test.ts compares this against better-call's own
+// `serializeSignedCookie`, so a bump that changes the shape fails there
+// rather than silently leaving revoked sessions in the consumer cache.
 async function signedSessionValue(token: string, secret: string): Promise<string> {
   const key = await crypto.subtle.importKey(
     'raw',

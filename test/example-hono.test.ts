@@ -13,6 +13,7 @@ interface PackageJson {
 }
 
 interface WranglerEnvConfig {
+  vars?: Record<string, string>;
   compatibility_date?: string;
   compatibility_flags?: string[];
   hyperdrive?: Array<{ binding: string; id?: string; localConnectionString?: string }>;
@@ -107,6 +108,11 @@ function readJsonFile<T>(relativePath: string): T | undefined {
     .replaceAll(/\/\*[\s\S]*?\*\//g, '')
     .replaceAll(/,(\s*[}\]])/g, '$1');
   return JSON.parse(sanitized) as T;
+}
+
+function readFileText(relativePath: string): string {
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path
+  return fs.readFileSync(path.resolve(exampleDir, relativePath), 'utf8');
 }
 
 const authWorkerPath = path.resolve(exampleDir, 'src/index.ts');
@@ -225,6 +231,21 @@ describe('Example package scaffolding and configuration', () => {
       ...(d1Env?.compatibility_flags ?? []),
     ];
     expect(flags).toContain('nodejs_compat');
+  });
+});
+
+describe('Example secrets handling', () => {
+  it('keeps BETTER_AUTH_SECRET out of wrangler.jsonc and documents .dev.vars instead', () => {
+    const raw = readFileText('wrangler.jsonc');
+    const wrangler = readJsonFile<WranglerConfig>('wrangler.jsonc');
+    const allVars = [wrangler?.vars, ...Object.values(wrangler?.env ?? {}).map((e) => e.vars)];
+    for (const vars of allVars) expect(vars?.BETTER_AUTH_SECRET).toBeUndefined();
+    expect(raw).not.toMatch(/"BETTER_AUTH_SECRET"\s*:/);
+
+    expect(readFileText('.dev.vars.example')).toMatch(/^BETTER_AUTH_SECRET=/m);
+    const readme = readFileText('README.md');
+    expect(readme).toMatch(/\.dev\.vars/);
+    expect(readme).toMatch(/wrangler secret put BETTER_AUTH_SECRET/);
   });
 });
 

@@ -38,6 +38,7 @@ const apiConfig = path.resolve(import.meta.dir, 'api.wrangler.jsonc');
 const persistRoot = path.resolve(import.meta.dir, '.wrangler');
 
 const READY_TIMEOUT_MS = 90_000;
+const INTEGRATION_SECRET = 'integration-secret-value-must-be-at-least-32-chars-long';
 
 export function requestedBackends(): Backend[] {
   const raw = process.env.INTEGRATION_BACKENDS ?? '';
@@ -198,6 +199,10 @@ function writeAuthWorkerConfig(persistTo: string): string {
   fs.mkdirSync(persistTo, { recursive: true });
   // eslint-disable-next-line security/detect-non-literal-fs-filename -- test-owned persist directory
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  // The signing secret is not in the example's config (it is a secret);
+  // wrangler dev reads it from a .dev.vars beside the config it is given.
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- test-owned persist directory
+  fs.writeFileSync(path.join(persistTo, '.dev.vars'), `BETTER_AUTH_SECRET=${INTEGRATION_SECRET}\n`);
   return configPath;
 }
 

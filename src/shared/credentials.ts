@@ -29,11 +29,19 @@ export function sessionCredentialFromCookie(
   return signed;
 }
 
-// The bearer plugin sends the bare (unsigned) token, unlike the cookie.
+// The bearer plugin accepts the bare token or the signed cookie value,
+// which a client may send URL-encoded (its base64 signature carries `=`).
+// The credential is normalised to the decoded form, so it is cached under
+// the same key the auth Worker clears on revocation.
 export function sessionCredentialFromAuthorizationHeader(request: Request): string | undefined {
   const header = request.headers.get('authorization');
   if (!header) return;
   const [scheme, token] = header.split(' ', 2);
-  if (!scheme || scheme.toLowerCase() !== 'bearer') return;
-  return token || undefined;
+  if (!scheme || !token || scheme.toLowerCase() !== 'bearer') return;
+  if (!token.includes('%')) return token;
+  try {
+    return decodeURIComponent(token);
+  } catch {
+    return;
+  }
 }

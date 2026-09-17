@@ -4,6 +4,8 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-07-16",
   "compatibility_flags": ["nodejs_compat"],
+  // BETTER_AUTH_SECRET is a secret, not a var: locally it comes from
+  // .dev.vars (see README), deployed it is set with `wrangler secret put`.
   "kv_namespaces": [
     {
       "binding": "AUTH_KV",
@@ -12,13 +14,11 @@
   ],
   "vars": {
     "AUTH_BASE_URL": "http:\/\/localhost:8787",
-    "BETTER_AUTH_SECRET": "example-secret-value-must-be-at-least-32-chars-long",
   },
   "env": {
     "d1": {
       "vars": {
         "AUTH_BASE_URL": "http:\/\/localhost:8787",
-        "BETTER_AUTH_SECRET": "example-secret-value-must-be-at-least-32-chars-long",
       },
       "kv_namespaces": [
         {
@@ -37,7 +37,6 @@
     "hyperdrive": {
       "vars": {
         "AUTH_BASE_URL": "http:\/\/localhost:8787",
-        "BETTER_AUTH_SECRET": "example-secret-value-must-be-at-least-32-chars-long",
       },
       "kv_namespaces": [
         {

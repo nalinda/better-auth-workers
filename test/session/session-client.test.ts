@@ -5,7 +5,8 @@ import {
   type SessionClient,
   type SessionClientOptions,
 } from '../../src/client';
-import { FakeKV } from '../helpers/auth';
+import { sessionCacheKeysFor } from '../../src/shared/session-cache';
+import { FakeKV, VALID_SECRET } from '../helpers/auth';
 
 // The real exported types, so a breaking change to createSessionClient's
 // signature turns this file red at compile time.
@@ -250,6 +251,44 @@ describe('createSessionClient verifies sessions over a service binding with a KV
       expect(primary.fetch).toHaveBeenCalledTimes(1);
       expect(consumer.fetch).toHaveBeenCalledTimes(0);
       expect(result?.session.token).toBe(TOKEN);
+    });
+  });
+
+  describe('bearer credential forms', () => {
+    // Better Auth signs the token with the auth Worker's secret; a client
+    // may echo the cookie value into the Authorization header verbatim,
+    // URL-encoded (the base64 signature ends in `=`). Whatever form it
+    // sends, the entry must sit under a key the auth Worker's revocation
+    // clears — the bare form or the decoded signed form.
+    it('caches an encoded signed bearer token under the key revocation clears', async () => {
+      const revocationKeys = await sessionCacheKeysFor(TOKEN, VALID_SECRET);
+      const signedKey = revocationKeys[1];
+      const signedValue = signedKey.slice(signedKey.lastIndexOf(`${TOKEN}.`));
+      expect(signedValue.endsWith('=')).toBe(true);
+      const encodedHeader = `Bearer ${encodeURIComponent(signedValue)}`;
+      const payload = sessionPayload(new Date(Date.now() + 3_600_000));
+      const answer = (input: RequestInfo | URL) =>
+        toRequest(input).headers.get('authorization') === encodedHeader
+          ? Response.json(payload)
+          : Response.json(null);
+      const binding = { fetch: mock((input: RequestInfo | URL) => Promise.resolve(answer(input))) };
+      const kv = new FakeKV();
+      const client = buildSessionClient({ auth: binding, kv, basePath: BASE_PATH });
+      const request = () =>
+        new Request('https://api.example.com/me', { headers: { authorization: encodedHeader } });
+
+      const result = await client.get(request());
+      expect(result?.session.token).toBe(TOKEN);
+      expect(kv.store.keys().toArray()).toEqual([signedKey]);
+
+      // The auth Worker revokes the session: it deletes every key form.
+      for (const key of revocationKeys) await kv.delete(key);
+
+      // Nothing is left to serve from cache: the next request goes back to
+      // the auth Worker instead of a stale entry.
+      expect(kv.store.size).toBe(0);
+      await client.get(request());
+      expect(binding.fetch).toHaveBeenCalledTimes(2);
     });
   });
 
