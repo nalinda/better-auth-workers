@@ -188,16 +188,16 @@ describe('KV secondary storage for session cache and rate limiter', () => {
       expect(() => createAuth(env, {})).toThrow(/database is required[\s\S]*kv is required/);
     });
 
-    it('still requires kv when a consumer-supplied secondaryStorage is set, since invalidation needs it', () => {
+    it('still requires kv when betterAuth.secondaryStorage is set, since invalidation needs it', () => {
       const env = buildEnv({ AUTH_KV: undefined as unknown as KVNamespace });
-      expect(() => createAuth(env, { secondaryStorage: new FakeKV() as never })).toThrow(
+      expect(() => createAuth(env, { betterAuth: { secondaryStorage: new FakeKV() } })).toThrow(
         /kv is required/
       );
     });
 
-    it('uses a consumer-supplied secondaryStorage for Better Auth while kv keeps invalidation', () => {
+    it('lets betterAuth.secondaryStorage replace the KV store for Better Auth while kv keeps invalidation', () => {
       const storage = new FakeKV();
-      const auth = createAuth(buildEnv(), { secondaryStorage: storage as never });
+      const auth = createAuth(buildEnv(), { betterAuth: { secondaryStorage: storage } });
       expect(auth.options.secondaryStorage).toBe(storage as never);
       expect(auth.options.hooks?.after).toBeDefined();
     });

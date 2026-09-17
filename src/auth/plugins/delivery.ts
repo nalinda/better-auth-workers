@@ -1,4 +1,9 @@
-import { type ContextRef, getExecutionContext, runNonBlocking } from '../../shared/non-blocking';
+import {
+  type ContextRef,
+  getExecutionContext,
+  runNonBlocking,
+  warnMissingContext,
+} from '../../shared/non-blocking';
 
 // Runs a consumer's delivery callback (sendOTP, sendMagicLink) off the
 // response path, on the request's ExecutionContext, and reports a failure
@@ -11,7 +16,9 @@ export function deliverNonBlocking(
   ctxRef: ContextRef,
   secrets: string[]
 ): void {
-  runNonBlocking(send, getExecutionContext(request, ctxRef.current), (error) => {
+  const ctx = getExecutionContext(request, ctxRef.current);
+  if (!ctx) warnMissingContext(ctxRef);
+  runNonBlocking(send, ctx, (error) => {
     console.error(redactSecrets(error, secrets));
   });
 }

@@ -3,6 +3,13 @@ import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import { type AuthEnv, createAuth } from '../../src/index';
 import { buildEnv, createMockExecutionContext } from '../helpers/auth';
 
+const sendOtpRequest = () =>
+  new Request('https://auth.example.com/api/auth/phone-number/send-otp', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ phoneNumber: '+15551234567' }),
+  });
+
 describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
   let validEnv: AuthEnv;
 
@@ -162,6 +169,57 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
         console.info = originalInfo;
         console.log = originalLog;
       }
+    });
+  });
+
+  describe('Delivery without an ExecutionContext', () => {
+    it('warns once per instance that delivery may be cancelled, and still responds', async () => {
+      const sendOTP = mock(() => {});
+      const auth = createAuth(validEnv, { phone: { sendOTP } });
+
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+      console.warn = (...args: unknown[]) => {
+        warnings.push(args.map(String).join(' '));
+      };
+      try {
+        // Neither handler(request, ctx) nor options.ctx: nothing to waitUntil on.
+        const first = await auth.handler(sendOtpRequest());
+        const second = await auth.handler(sendOtpRequest());
+        expect([first.status, second.status]).toEqual([200, 200]);
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      expect(sendOTP).toHaveBeenCalledTimes(2);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatch(/without an ExecutionContext/);
+      expect(warnings[0]).toMatch(/auth\.handler\(request, ctx\)/);
+    });
+
+    it('does not warn when the context comes from handler(request, ctx)', async () => {
+      const { ctx, promises } = createMockExecutionContext();
+      const auth = createAuth(validEnv, { phone: { sendOTP: () => {} } });
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+      console.warn = (...args: unknown[]) => {
+        warnings.push(args.map(String).join(' '));
+      };
+      try {
+        const res = await auth.handler(
+          new Request('https://auth.example.com/api/auth/phone-number/send-otp', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ phoneNumber: '+15551234567' }),
+          }),
+          ctx
+        );
+        expect(res.status).toBe(200);
+        await Promise.all(promises);
+      } finally {
+        console.warn = originalWarn;
+      }
+      expect(warnings).toHaveLength(0);
     });
   });
 

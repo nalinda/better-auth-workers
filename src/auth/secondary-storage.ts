@@ -69,11 +69,14 @@ function parseCounter(raw: string | null): RateLimitCounter | undefined {
   }
 }
 
+// Better Auth's secondary storage over the KV namespace. A consumer who
+// wants a different store sets `betterAuth.secondaryStorage`, which the
+// escape hatch layers over this; `kv` stays required either way, since the
+// session-cache invalidation hook deletes from it.
 export function buildSecondaryStorage(
   options?: CreateAuthOptions,
   envObj?: Partial<AuthEnv>
 ): CreateAuthSecondaryStorage | undefined {
-  if (options?.secondaryStorage) return options.secondaryStorage;
   const kv = resolveKv(options, envObj);
   if (!kv) return;
   return kvSecondaryStorage(kv);

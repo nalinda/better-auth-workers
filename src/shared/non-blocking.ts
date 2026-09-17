@@ -7,6 +7,20 @@ import type { ExecutionContext } from '../types';
 // instance. The context passed to `auth.handler(request, ctx)` always wins.
 export interface ContextRef {
   current?: ExecutionContext;
+  // Set once the missing-context warning has been logged for this instance.
+  hasWarnedMissingContext?: boolean;
+}
+
+const MISSING_CONTEXT_WARNING =
+  'better-auth-workers: delivery (sendOTP / sendMagicLink) was scheduled without an ExecutionContext. Pass the request context as auth.handler(request, ctx) — without it the Workers runtime may cancel delivery once the response is sent, while the response still reports success.';
+
+// A delivery with no context is a misconfiguration, not a quiet fallback:
+// the promise is detached and may be cancelled after the response. Logged
+// once per instance so a busy Worker is not flooded.
+export function warnMissingContext(ctxRef: ContextRef): void {
+  if (ctxRef.hasWarnedMissingContext) return;
+  ctxRef.hasWarnedMissingContext = true;
+  console.warn(MISSING_CONTEXT_WARNING);
 }
 
 const requestContextMap = new WeakMap<Request, ExecutionContext>();

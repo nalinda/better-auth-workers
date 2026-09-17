@@ -124,7 +124,7 @@ function getCachedInstance(env: object, optionsKey: string): CachedInstance | un
 }
 
 // Options shapes memoised per env. Non-plain objects under `options` (a
-// `secondaryStorage` instance, a wrapped `kv`) are keyed by identity, so a
+// `betterAuth.secondaryStorage` instance, a wrapped `kv`) are keyed by identity, so a
 // consumer constructing one inline per request would otherwise grow this
 // map for the life of the isolate; the oldest shape is evicted instead.
 const MAX_SHAPES_PER_ENV = 8;

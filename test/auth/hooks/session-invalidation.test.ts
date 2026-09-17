@@ -517,7 +517,7 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
     it('keeps invalidating through kv when Better Auth’s storage is a consumer-supplied one', async () => {
       const kv = await seededKv([TOKEN]);
       const auth = createAuth(buildEnv({ AUTH_KV: kv.asBinding() }), {
-        secondaryStorage: new FakeKV() as never,
+        betterAuth: { secondaryStorage: new FakeKV() },
       });
 
       await auth.options.hooks!.after!(

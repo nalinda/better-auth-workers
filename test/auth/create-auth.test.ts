@@ -69,12 +69,13 @@ describe('Memoisation', () => {
 
   it('keeps only the most recent option shapes per env, so identity-keyed objects cannot grow it unbounded', () => {
     const env = buildEnv();
-    const first = createAuth(env, { secondaryStorage: new FakeKV() as never });
-    for (let i = 0; i < 8; i += 1) createAuth(env, { secondaryStorage: new FakeKV() as never });
+    const first = createAuth(env, { betterAuth: { secondaryStorage: new FakeKV() } });
+    for (let i = 0; i < 8; i += 1)
+      createAuth(env, { betterAuth: { secondaryStorage: new FakeKV() } });
 
     // The first shape was evicted: the same storage object builds afresh.
     const storage = first.options.secondaryStorage;
-    const rebuilt = createAuth(env, { secondaryStorage: storage as never });
+    const rebuilt = createAuth(env, { betterAuth: { secondaryStorage: storage as object } });
     expect(rebuilt).not.toBe(first);
   });
 

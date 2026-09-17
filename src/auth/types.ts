@@ -65,7 +65,6 @@ export interface CreateAuthOptions {
   secret?: string;
   database?: CreateAuthDatabaseOptions | D1Database;
   kv?: KVStore;
-  secondaryStorage?: CreateAuthSecondaryStorage;
   // The request's ExecutionContext. Only a fallback: pass the context to
   // `auth.handler(request, ctx)` on every request, since a memoised
   // instance would otherwise keep using the context of the request that
