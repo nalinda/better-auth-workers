@@ -23,10 +23,11 @@ bun install
 
 ### 2. Run with D1 (SQLite)
 
-Apply SQLite migrations locally:
+Apply the package's shipped SQLite schema to your local D1 database (run from the repository root):
 
 ```sh
-wrangler d1 migrations apply example-auth-db --local
+wrangler d1 execute example-auth-db --local --env d1 -c examples/hono/wrangler.jsonc \
+  --file migrations/sqlite/0001_init.sql
 ```
 
 Start the dev server:
@@ -43,7 +44,14 @@ bun run dev:d1
 
 ### 3. Run with Hyperdrive (Postgres)
 
-Ensure local Postgres is running (e.g. `postgresql://postgres:postgres@localhost:5432/auth_example`), then run:
+Ensure local Postgres is running (e.g. `postgresql://postgres:postgres@localhost:5432/auth_example`), then apply the package's shipped Postgres schema (run from the repository root):
+
+```sh
+psql postgresql://postgres:postgres@localhost:5432/auth_example \
+  -f migrations/postgres/0001_init.sql
+```
+
+Then start the dev server:
 
 ```sh
 bun run dev:hyperdrive
