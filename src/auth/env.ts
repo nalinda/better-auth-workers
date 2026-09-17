@@ -1,22 +1,28 @@
 import type { AuthEnv } from '../types';
 import type { CreateAuthOptions } from './types';
 
-export function resolveBaseURL(options?: CreateAuthOptions, envObj?: AuthEnv): string {
+export function resolveBaseURL(
+  options?: CreateAuthOptions,
+  envObj?: Partial<AuthEnv>
+): string | undefined {
   const baseURL =
     options?.baseURL ??
     (typeof envObj?.AUTH_BASE_URL === 'string' ? envObj.AUTH_BASE_URL : undefined);
-  if (!baseURL && !options?.betterAuth?.baseURL) {
-    throw new Error('baseURL is required: specify options.baseURL or env.AUTH_BASE_URL');
-  }
-  return baseURL ?? (options?.betterAuth?.baseURL as string);
+  return (
+    baseURL ??
+    (typeof options?.betterAuth?.baseURL === 'string' ? options.betterAuth.baseURL : undefined)
+  );
 }
 
-export function resolveSecret(options?: CreateAuthOptions, envObj?: AuthEnv): string {
+export function resolveSecret(
+  options?: CreateAuthOptions,
+  envObj?: Partial<AuthEnv>
+): string | undefined {
   const secret =
     options?.secret ??
     (typeof envObj?.BETTER_AUTH_SECRET === 'string' ? envObj.BETTER_AUTH_SECRET : undefined);
-  if (!secret && !options?.betterAuth?.secret) {
-    throw new Error('secret is required: specify options.secret or env.BETTER_AUTH_SECRET');
-  }
-  return secret ?? (options?.betterAuth?.secret as string);
+  return (
+    secret ??
+    (typeof options?.betterAuth?.secret === 'string' ? options.betterAuth.secret : undefined)
+  );
 }

@@ -24,7 +24,7 @@ function getHyperdriveOption(
 
 export function resolveHyperdriveConnectionString(
   options?: CreateAuthOptions,
-  envObj?: AuthEnv
+  envObj?: Partial<AuthEnv>
 ): string | undefined {
   const hyperdriveOption = getHyperdriveOption(options?.database);
   if (
@@ -50,7 +50,7 @@ export function resolveHyperdriveConnectionString(
 
 function resolveD1Binding(
   options?: CreateAuthOptions,
-  envObj?: AuthEnv
+  envObj?: Partial<AuthEnv>
 ): D1Database | Record<string, (arg?: string) => void> | undefined {
   const databaseOpt = options?.database;
   if (databaseOpt && typeof databaseOpt === 'object') {
@@ -63,11 +63,14 @@ function resolveD1Binding(
   }
 
   if (options?.database === undefined && envObj?.DB) {
-    return envObj.DB as D1Database;
+    return envObj.DB;
   }
 }
 
-export function buildDatabase(options?: CreateAuthOptions, envObj?: AuthEnv): BuildDatabaseResult {
+export function resolveDatabase(
+  options?: CreateAuthOptions,
+  envObj?: Partial<AuthEnv>
+): BuildDatabaseResult | undefined {
   const connectionString = resolveHyperdriveConnectionString(options, envObj);
   if (connectionString) {
     const PoolClass = loadPgPoolClass();
@@ -88,8 +91,21 @@ export function buildDatabase(options?: CreateAuthOptions, envObj?: AuthEnv): Bu
   if (options?.betterAuth?.database) {
     return { database: options.betterAuth.database };
   }
+}
 
-  throw new Error(
-    'database is required: specify options.database.hyperdrive or options.database.d1 (or provide HYPERDRIVE or DB on env)'
-  );
+const DATABASE_MISSING_MESSAGE =
+  'database is required: specify options.database.hyperdrive or options.database.d1 (or provide HYPERDRIVE or DB on env)';
+
+// Reports the same "is a database resolvable" question as resolveDatabase,
+// without instantiating a pg Pool, so validation can run without the
+// side effect of opening a connection.
+export function databaseProblem(
+  options?: CreateAuthOptions,
+  envObj?: Partial<AuthEnv>
+): string | undefined {
+  const hasDatabase =
+    resolveHyperdriveConnectionString(options, envObj) !== undefined ||
+    resolveD1Binding(options, envObj) !== undefined ||
+    Boolean(options?.betterAuth?.database);
+  return hasDatabase ? undefined : DATABASE_MISSING_MESSAGE;
 }

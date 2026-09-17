@@ -3,7 +3,7 @@ import { betterAuth } from 'better-auth';
 import { withHandlerContext } from '../shared/non-blocking';
 import type { AuthEnv } from '../types';
 import { buildRateLimitConfig, buildSessionConfig } from './config';
-import { buildDatabase, resolveHyperdriveConnectionString } from './database';
+import { resolveDatabase, resolveHyperdriveConnectionString } from './database';
 import { resolveBaseURL, resolveSecret } from './env';
 import { getOptionsKey, normalizeArgs } from './normalize';
 import { buildPlugins, buildSocialProviders } from './plugins';
@@ -11,6 +11,7 @@ import { withPoolLifecycle } from './postgres-pool';
 import { buildSecondaryStorage } from './secondary-storage';
 import { buildSessionInvalidationHook } from './session-invalidation';
 import type { CreateAuthOptions } from './types';
+import { validateConfig } from './validate';
 
 export type AuthInstance = ReturnType<typeof betterAuth>;
 
@@ -75,12 +76,14 @@ export function createAuth(
     }
   }
 
-  const baseURL = resolveBaseURL(options, env);
-  const secret = resolveSecret(options, env);
+  validateConfig(options, env);
+
+  const baseURL = resolveBaseURL(options, env) as string;
+  const secret = resolveSecret(options, env) as string;
   const plugins = buildPlugins(options);
   const socialProviders = buildSocialProviders(options, env);
   const secondaryStorage = buildSecondaryStorage(options, env);
-  const { database, pool } = buildDatabase(options, env);
+  const { database, pool } = resolveDatabase(options, env) ?? {};
   const session = buildSessionConfig(options);
   const rateLimit = buildRateLimitConfig(options, secondaryStorage);
   const invalidateSessionCache = buildSessionInvalidationHook(options, env);

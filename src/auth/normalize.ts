@@ -36,7 +36,7 @@ function isOptionsLike(obj: object | undefined): obj is CreateAuthOptions {
 export function normalizeArgs(
   arg1: AuthEnv | CreateAuthOptions,
   arg2?: CreateAuthOptions | AuthEnv
-): { env: AuthEnv; options?: CreateAuthOptions } {
+): { env: Partial<AuthEnv>; options?: CreateAuthOptions } {
   if (isEnvLike(arg2) && !isEnvLike(arg1)) {
     return {
       env: arg2,

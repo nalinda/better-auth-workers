@@ -32,8 +32,8 @@ async function resolveInvalidatedToken(ctx: AfterHookContext): Promise<string | 
   return undefined;
 }
 
-function resolveKv(options?: CreateAuthOptions, envObj?: AuthEnv): KVStore | undefined {
-  const kv = (options?.kv ?? envObj?.AUTH_KV) as KVStore | undefined;
+function resolveKv(options?: CreateAuthOptions, envObj?: Partial<AuthEnv>): KVStore | undefined {
+  const kv = options?.kv ?? envObj?.AUTH_KV;
   if (!kv || typeof kv !== 'object') return;
   return kv;
 }
@@ -49,7 +49,7 @@ function resolveKv(options?: CreateAuthOptions, envObj?: AuthEnv): KVStore | und
  */
 export function buildSessionInvalidationHook(
   options?: CreateAuthOptions,
-  envObj?: AuthEnv
+  envObj?: Partial<AuthEnv>
 ): ((ctx: AfterHookContext) => Promise<void>) | undefined {
   const kv = resolveKv(options, envObj);
   if (!kv) return undefined;

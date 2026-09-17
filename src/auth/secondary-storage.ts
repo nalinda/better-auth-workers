@@ -1,8 +1,8 @@
 import type { AuthEnv, KVStore } from '../types';
 import type { CreateAuthOptions, CreateAuthSecondaryStorage } from './types';
 
-function resolveKv(options?: CreateAuthOptions, envObj?: AuthEnv): KVStore | undefined {
-  const kv = (options?.kv ?? envObj?.AUTH_KV) as KVStore | undefined;
+function resolveKv(options?: CreateAuthOptions, envObj?: Partial<AuthEnv>): KVStore | undefined {
+  const kv = options?.kv ?? envObj?.AUTH_KV;
   if (!kv || typeof kv !== 'object') return;
   return kv;
 }
@@ -25,7 +25,7 @@ function kvSecondaryStorage(kv: KVStore): CreateAuthSecondaryStorage {
 
 export function buildSecondaryStorage(
   options?: CreateAuthOptions,
-  envObj?: AuthEnv
+  envObj?: Partial<AuthEnv>
 ): CreateAuthSecondaryStorage | undefined {
   if (options?.secondaryStorage) return options.secondaryStorage;
   const kv = resolveKv(options, envObj);
