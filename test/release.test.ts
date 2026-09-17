@@ -17,6 +17,7 @@ interface Job {
   name?: string;
   'runs-on'?: string;
   permissions?: Record<string, string>;
+  env?: Record<string, string>;
   steps?: Step[];
 }
 
@@ -117,10 +118,24 @@ describe('Release workflow', () => {
     const workflow = readReleaseWorkflow();
     const steps = workflow?.jobs?.release?.steps ?? [];
     const notifyStep = steps.find(
-      (s) => (s.if ?? '').includes('secrets.NPM_TOKEN') && /skipped|pending/i.test(s.run ?? '')
+      (s) => (s.if ?? '').includes('env.NPM_TOKEN') && /skipped|pending/i.test(s.run ?? '')
     );
     expect(notifyStep).toBeDefined();
     expect(notifyStep?.run).toMatch(/pending NPM_TOKEN|NPM_TOKEN/);
+  });
+
+  // GitHub Actions does not expose `secrets` in a step-level `if:`; such a
+  // condition fails to evaluate and the whole job errors on the first tag.
+  it('maps NPM_TOKEN to the job env and never reads secrets in a step condition', () => {
+    const workflow = readReleaseWorkflow();
+    const job = workflow?.jobs?.release;
+    expect(job?.env?.NPM_TOKEN).toBe('${{ secrets.NPM_TOKEN }}');
+    const gated = (job?.steps ?? []).filter((s) => (s.if ?? '').includes('NPM_TOKEN'));
+    expect(gated.length).toBeGreaterThanOrEqual(2);
+    for (const step of gated) {
+      expect(step.if).toMatch(/env\.NPM_TOKEN/);
+      expect(step.if).not.toMatch(/secrets\./);
+    }
   });
 
   it('gates npm publish on NPM_TOKEN rather than running unconditionally', () => {
@@ -131,7 +146,7 @@ describe('Release workflow', () => {
     );
     expect(publishStep).toBeDefined();
     expect(publishStep?.if).toBeDefined();
-    expect(publishStep?.if).toContain('secrets.NPM_TOKEN');
+    expect(publishStep?.if).toContain('env.NPM_TOKEN');
   });
 
   it('includes provenance flag on npm publish', () => {
@@ -141,6 +156,24 @@ describe('Release workflow', () => {
       (s.run ?? '').split('\n').some((line) => line.trimStart().startsWith('npm publish'))
     );
     expect(publishStep?.run).toContain('--provenance');
+  });
+});
+
+describe('npm provenance prerequisites', () => {
+  it('package.json names the repository the provenance attestation is checked against', () => {
+    const pkgPath = path.resolve(import.meta.dir, '../package.json');
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as {
+      repository?: { type?: string; url?: string };
+      homepage?: string;
+      bugs?: { url?: string };
+    };
+    expect(pkg.repository?.type).toBe('git');
+    expect(pkg.repository?.url).toMatch(
+      /^git\+https:\/\/github\.com\/[^/]+\/better-auth-workers\.git$/
+    );
+    expect(pkg.homepage).toMatch(/github\.com/);
+    expect(pkg.bugs?.url).toMatch(/\/issues$/);
   });
 });
 

@@ -35,7 +35,7 @@ export interface CreateAuthDatabaseOptions {
   // driver has to be imported by the Worker itself for the bundler to
   // include it; the package cannot load it on the consumer's behalf.
   pg?: PgDriver;
-  d1?: D1Database | Record<string, (arg?: string) => void>;
+  d1?: D1Database;
 }
 
 export interface CreateAuthSecondaryStorage {

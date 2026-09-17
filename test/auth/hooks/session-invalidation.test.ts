@@ -18,6 +18,7 @@ interface SessionRecord {
 interface FakeEndpointContext {
   path: string;
   body?: { token?: string; sessionToken?: string; userId?: string };
+  headers?: Headers;
   context: {
     secret: string;
     authCookies: { sessionToken: { name: string } };
@@ -54,11 +55,18 @@ function fakeStore(): FakeStore {
 function endpointContext(
   store: FakeStore,
   path: string,
-  options: { cookieToken?: string; body?: NonNullable<FakeEndpointContext['body']> } = {}
+  options: {
+    cookieToken?: string;
+    bearer?: string;
+    body?: NonNullable<FakeEndpointContext['body']>;
+  } = {}
 ): FakeEndpointContext {
   return {
     path,
     body: options.body,
+    headers: options.bearer
+      ? new Headers({ authorization: `Bearer ${options.bearer}` })
+      : undefined,
     context: {
       secret: VALID_SECRET,
       authCookies: { sessionToken: { name: SESSION_COOKIE_NAME } },
@@ -111,8 +119,8 @@ async function seededKv(tokens: string[]): Promise<FakeKV> {
   return kv;
 }
 
-function authWith(kv: FakeKV): AuthInstance {
-  return createAuth(buildEnv({ AUTH_KV: kv.asBinding() }), { kv });
+function authWith(kv: FakeKV, hasBearer = false): AuthInstance {
+  return createAuth(buildEnv({ AUTH_KV: kv.asBinding() }), { kv, bearer: hasBearer });
 }
 
 describe('createAuth wires session cache invalidation into the Better Auth instance', () => {
@@ -240,6 +248,70 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
         expect(kv.deletes).not.toContain(key);
       }
       expect(new Set(kv.deletes)).toEqual(new Set(await cacheKeysFor(USER_TOKENS)));
+    });
+  });
+
+  describe('bearer-authenticated callers', () => {
+    // Our before hook runs before the bearer plugin's, so the caller is
+    // read off the Authorization header directly.
+    it.each([
+      ['bare token', TOKEN],
+      ['signed token', `${TOKEN}.c2lnbmF0dXJl`],
+      ['URL-encoded signed token', encodeURIComponent(`${TOKEN}.c2lnbmF0dXJl=`)],
+    ])(
+      '/revoke-sessions over a %s clears every cached session of the caller',
+      async (_form, bearer) => {
+        const kv = await seededKv(USER_TOKENS);
+        const store = fakeStore();
+        const auth = authWith(kv, true);
+        const ctx = endpointContext(store, '/revoke-sessions', { bearer });
+
+        await dispatch(auth, ctx, () => store.sessions.clear());
+
+        expect(new Set(kv.deletes)).toEqual(new Set(await cacheKeysFor(USER_TOKENS)));
+      }
+    );
+
+    it('/admin/revoke-user-sessions over a bearer token clears the named user’s sessions', async () => {
+      const kv = await seededKv(USER_TOKENS);
+      const store = fakeStore();
+      const auth = authWith(kv, true);
+      const ctx = endpointContext(store, '/admin/revoke-user-sessions', {
+        bearer: ADMIN_TOKEN,
+        body: { userId: USER_ID },
+      });
+
+      await dispatch(auth, ctx, () => store.sessions.clear());
+
+      expect(new Set(kv.deletes)).toEqual(new Set(await cacheKeysFor(USER_TOKENS)));
+    });
+
+    it('ignores the Authorization header when the bearer plugin is not enabled', async () => {
+      const kv = await seededKv(USER_TOKENS);
+      const store = fakeStore();
+      const auth = authWith(kv, false);
+
+      await dispatch(auth, endpointContext(store, '/revoke-sessions', { bearer: TOKEN }), () =>
+        store.sessions.clear()
+      );
+
+      expect(store.listCalls).toHaveLength(0);
+      expect(kv.deletes).toHaveLength(0);
+    });
+
+    it('ignores a bearer token that does not match a session', async () => {
+      const kv = await seededKv(USER_TOKENS);
+      const store = fakeStore();
+      const auth = authWith(kv, true);
+
+      await dispatch(
+        auth,
+        endpointContext(store, '/revoke-sessions', { bearer: 'not-a-session' }),
+        () => UNAUTHORIZED
+      );
+
+      expect(store.listCalls).toHaveLength(0);
+      expect(kv.deletes).toHaveLength(0);
     });
   });
 

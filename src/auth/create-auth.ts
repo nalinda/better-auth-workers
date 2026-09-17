@@ -123,9 +123,12 @@ interface CachedInstance {
   ctxRef: ContextRef;
 }
 
-// Memoisation is per `env` (one per isolate) and per options shape. It only
-// applies to the D1 path: a Hyperdrive instance owns a pg Pool that is
-// released after its request, so it is rebuilt on every call.
+// The D1 path memoises the instance per `env` (one per isolate) and per
+// options shape; the Hyperdrive path builds fresh per request for pool
+// safety, since its instance owns a pg Pool that is released after the
+// request. The key ignores functions (see options-key.ts), so the memoised
+// instance keeps the callbacks of the request that built it — the README
+// warns that they must not close over per-request state.
 const instanceCache = new WeakMap<object, Map<string, CachedInstance>>();
 
 function getCachedInstance(env: object, optionsKey: string): CachedInstance | undefined {

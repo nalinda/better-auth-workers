@@ -287,6 +287,23 @@ describe.each(requestedBackends())('example Worker under wrangler dev (%s)', (ba
     expect(afterSignOut.status).toBe(401);
   });
 
+  it('a bearer-authenticated revoke-sessions invalidates the session client cache too', async () => {
+    const phoneNumber = nextPhone();
+    const verified = await signInWithPhone(server, phoneNumber);
+    const token = verified.headers.get('set-auth-token');
+    expect(token).toBeTruthy();
+    const authorization = `Bearer ${token as string}`;
+
+    const warm = await fetch(`${server.baseUrl}/me`, { headers: { authorization } });
+    expect(warm.status).toBe(200);
+
+    const revoked = await postJson(server.baseUrl, '/auth/revoke-sessions', {}, { authorization });
+    expect(revoked.status).toBe(200);
+
+    const afterRevoke = await fetch(`${server.baseUrl}/me`, { headers: { authorization } });
+    expect(afterRevoke.status).toBe(401);
+  });
+
   it('allowedMethods rejects a sign-in method the Worker does not allow with 403', async () => {
     const rejected = await postJson(server.baseUrl, '/auth/sign-in/social', {
       provider: 'google',

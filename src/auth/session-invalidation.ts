@@ -31,6 +31,8 @@ interface InternalAdapter {
 interface HookContext {
   path: string;
   body?: { token?: string; sessionToken?: string; userId?: string };
+  headers?: Headers;
+  request?: Request;
   context: {
     secret: string;
     authCookies: { sessionToken: { name: string } };
@@ -57,22 +59,50 @@ const BODY_USER_PATHS = new Set(['/admin/revoke-user-sessions', '/admin/remove-u
 // context Better Auth hands to both hooks of one dispatch.
 const pendingTokens = new WeakMap<object, string[]>();
 
-async function currentSessionToken(ctx: HookContext): Promise<string | undefined> {
+// Our `hooks.before` runs before the bearer plugin's, which is what turns
+// `Authorization: Bearer …` into the session cookie, so a bearer caller is
+// read off the header here the way that plugin does: the value is either
+// the bare token or the signed `<token>.<signature>` form (possibly
+// URL-encoded). The token is only ever used to look the session up, so an
+// unsigned or forged value resolves to nothing.
+function bearerSessionToken(ctx: HookContext): string | undefined {
+  const header = ctx.request?.headers.get('authorization') ?? ctx.headers?.get('authorization');
+  if (!header || header.slice(0, 7).toLowerCase() !== 'bearer ') return;
+  let value = header.slice(7).trim();
+  if (value.includes('%')) {
+    try {
+      value = decodeURIComponent(value);
+    } catch {
+      return;
+    }
+  }
+  const [token] = value.split('.', 1);
+  return token || undefined;
+}
+
+async function currentSessionToken(
+  ctx: HookContext,
+  canUseBearer: boolean
+): Promise<string | undefined> {
   const token = await ctx.getSignedCookie(
     ctx.context.authCookies.sessionToken.name,
     ctx.context.secret
   );
-  return token ?? undefined;
+  if (token) return token;
+  return canUseBearer ? bearerSessionToken(ctx) : undefined;
 }
 
 // The admin routes name the target user in the body, which is
 // attacker-chosen input on an unauthenticated request; their sessions are
 // only listed for a caller that has a session of its own. The admin
 // plugin's own authorization then decides whether the revocation happens.
-async function resolveTargetUserId(ctx: HookContext): Promise<string | undefined> {
+async function resolveTargetUserId(
+  ctx: HookContext,
+  canUseBearer: boolean
+): Promise<string | undefined> {
   const isAdminRoute = BODY_USER_PATHS.has(ctx.path);
   if (!isAdminRoute && !CURRENT_USER_PATHS.has(ctx.path)) return;
-  const token = await currentSessionToken(ctx);
+  const token = await currentSessionToken(ctx, canUseBearer);
   if (!token) return;
   const caller = await ctx.context.internalAdapter.findSession(token);
   if (!caller) return;
@@ -80,7 +110,8 @@ async function resolveTargetUserId(ctx: HookContext): Promise<string | undefined
 }
 
 async function resolveSingleToken(ctx: HookContext): Promise<string | undefined> {
-  if (ctx.path === '/sign-out') return currentSessionToken(ctx);
+  // By `after`, the bearer plugin has already turned the header into the cookie.
+  if (ctx.path === '/sign-out') return currentSessionToken(ctx, false);
   if (ctx.path === '/revoke-session') return ctx.body?.token;
   if (ctx.path === '/admin/revoke-user-session') return ctx.body?.sessionToken;
 }
@@ -95,11 +126,12 @@ export function buildSessionTokenCollector(
   envObj?: Partial<AuthEnv>
 ): ((ctx: HookContext) => Promise<void>) | undefined {
   if (!resolveKv(options, envObj)) return undefined;
-  return collectSessionTokens;
+  const canUseBearer = Boolean(options?.bearer);
+  return (ctx: HookContext) => collectSessionTokens(ctx, canUseBearer);
 }
 
-async function collectSessionTokens(ctx: HookContext): Promise<void> {
-  const userId = await resolveTargetUserId(ctx);
+async function collectSessionTokens(ctx: HookContext, canUseBearer: boolean): Promise<void> {
+  const userId = await resolveTargetUserId(ctx, canUseBearer);
   if (!userId) return;
   const sessions = await ctx.context.internalAdapter.listSessions(userId);
   pendingTokens.set(

@@ -6,8 +6,10 @@ import type {
   HyperdriveDatabaseOption,
 } from './types';
 
-export type ResolvedDatabase =
-  PgPool | D1Database | Record<string, (arg?: string) => void> | ConfigValue;
+// What Better Auth is handed as `database`: a pg Pool on the Hyperdrive
+// path, the D1 binding on the D1 path, or whatever `betterAuth.database`
+// supplied through the escape hatch.
+export type ResolvedDatabase = PgPool | D1Database | ConfigValue;
 
 interface BuildDatabaseResult {
   database: ResolvedDatabase;
@@ -51,7 +53,7 @@ export function resolveHyperdriveConnectionString(
 function resolveD1Binding(
   options?: CreateAuthOptions,
   envObj?: Partial<AuthEnv>
-): D1Database | Record<string, (arg?: string) => void> | undefined {
+): D1Database | undefined {
   const databaseOpt = options?.database;
   if (databaseOpt && typeof databaseOpt === 'object') {
     if ('d1' in databaseOpt && databaseOpt.d1) {

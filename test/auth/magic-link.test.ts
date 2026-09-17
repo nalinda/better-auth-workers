@@ -77,6 +77,52 @@ describe('Magic link sign-in with user-supplied sendMagicLink under waitUntil', 
     });
   });
 
+  describe('Log hygiene', () => {
+    it('never logs the magic-link token or URL, even when the delivery error echoes them', async () => {
+      let sentUrl = '';
+      let sentToken = '';
+      const sendMagicLink = mock(({ url, token }: { url: string; token: string }) => {
+        sentUrl = url;
+        sentToken = token;
+        throw new Error(`gateway rejected request body: {"link":"${url}","token":"${token}"}`);
+      });
+
+      const { ctx, promises } = createMockExecutionContext();
+      const auth = createAuth(validEnv, { ctx, magicLink: { sendMagicLink } });
+
+      const capturedLogs: string[] = [];
+      const pushLog = (...args: unknown[]) => {
+        capturedLogs.push(args.map(String).join(' '));
+      };
+      const originalError = console.error;
+      const originalLog = console.log;
+      console.error = pushLog;
+      console.log = pushLog;
+
+      try {
+        const res = await auth.handler(
+          new Request('https://auth.example.com/api/auth/sign-in/magic-link', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ email: 'user@example.com' }),
+          }),
+          ctx
+        );
+        expect(res.status).toBe(200);
+        await Promise.all(promises);
+
+        expect(sentToken.length).toBeGreaterThan(0);
+        const allLogs = capturedLogs.join('\n');
+        expect(allLogs).toContain('gateway rejected request body');
+        expect(allLogs).not.toContain(sentToken);
+        expect(allLogs).not.toContain(sentUrl);
+      } finally {
+        console.error = originalError;
+        console.log = originalLog;
+      }
+    });
+  });
+
   describe('Delivery failure handling', () => {
     it('returns a successful response when sendMagicLink throws and logs the error to worker logs', async () => {
       const deliveryError = new Error('Email provider gateway timeout');

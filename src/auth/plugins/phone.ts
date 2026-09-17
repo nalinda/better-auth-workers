@@ -1,8 +1,9 @@
 import type { PhoneNumberOptions } from 'better-auth/plugins';
 import { phoneNumber } from 'better-auth/plugins';
 
-import { type ContextRef, getExecutionContext, runNonBlocking } from '../../shared/non-blocking';
+import type { ContextRef } from '../../shared/non-blocking';
 import type { CreateAuthPhoneOptions } from '../types';
+import { deliverNonBlocking } from './delivery';
 
 const E164_REGEX = /^\+[1-9]\d{1,14}$/;
 
@@ -36,28 +37,7 @@ export function buildPhonePlugin(
         return;
       }
       const req = ctx?.request;
-      const execCtx = getExecutionContext(req, ctxRef.current);
-      runNonBlocking(
-        async () => {
-          await phoneOpts.sendOTP(data, req);
-        },
-        execCtx,
-        (error) => {
-          if (error instanceof Error) {
-            if (data.code && error.message.includes(data.code)) {
-              console.error(new Error(error.message.replaceAll(data.code, '[REDACTED]')));
-              return;
-            }
-            console.error(error);
-            return;
-          }
-          if (typeof error === 'string') {
-            console.error(data.code ? error.replaceAll(data.code, '[REDACTED]') : error);
-            return;
-          }
-          console.error(error);
-        }
-      );
+      deliverNonBlocking(() => phoneOpts.sendOTP(data, req), req, ctxRef, [data.code]);
     },
   };
   return phoneNumber(phonePluginOptions);
