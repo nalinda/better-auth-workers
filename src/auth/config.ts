@@ -46,8 +46,22 @@ export function buildRateLimitConfig(
 // migrations (see migrations/) and D1/Hyperdrive have no introspection the
 // check could use; a consumer's `betterAuth.advanced` is layered on top so
 // setting e.g. `advanced.disableCSRFCheck` does not turn the check back on.
+// The rate limiter keys on the client IP. Better Auth's default reads only
+// x-forwarded-for and, with no trusted proxies configured, drops any
+// multi-valued value into one shared bucket — which a client can force by
+// sending its own X-Forwarded-For. On Workers, cf-connecting-ip is set by
+// Cloudflare and cannot be spoofed, so it is preferred; x-forwarded-for
+// remains the fallback for the service-binding path the session client
+// populates. `betterAuth.advanced.ipAddress` overrides this wholesale.
+const DEFAULT_IP_ADDRESS_HEADERS = ['cf-connecting-ip', 'x-forwarded-for'];
+
 export function buildAdvancedConfig(options?: CreateAuthOptions): Loose {
   const advanced = betterAuthField(options, 'advanced');
   const database = advanced?.database as Loose | undefined;
-  return { ...advanced, database: { validateSchema: false, ...database } };
+  const ipAddress = advanced?.ipAddress as Loose | undefined;
+  return {
+    ...advanced,
+    database: { validateSchema: false, ...database },
+    ipAddress: { ipAddressHeaders: DEFAULT_IP_ADDRESS_HEADERS, ...ipAddress },
+  };
 }

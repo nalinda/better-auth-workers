@@ -312,6 +312,7 @@ describe('betterAuth is the single escape hatch, layered over the package defaul
     expect(auth.options.advanced).toEqual({
       cookiePrefix: 'b',
       database: { validateSchema: false },
+      ipAddress: { ipAddressHeaders: ['cf-connecting-ip', 'x-forwarded-for'] },
     });
   });
 });

@@ -25,8 +25,9 @@ function nextPhone(): string {
 }
 
 // The rate limiter is on by default, so each test is its own client: it
-// sends a distinct forwarded IP the way Cloudflare would for real clients,
-// instead of every test sharing one bucket.
+// sends a distinct client IP the way Cloudflare's edge would (in
+// cf-connecting-ip, which the limiter prefers, with x-forwarded-for
+// alongside), instead of every test sharing one bucket.
 const client = { sequence: 0, ip: '203.0.113.1' };
 
 function becomeNextClient(): void {
@@ -35,7 +36,7 @@ function becomeNextClient(): void {
 }
 
 function asClient(headers: Record<string, string> = {}): Record<string, string> {
-  return { 'x-forwarded-for': client.ip, ...headers };
+  return { 'cf-connecting-ip': client.ip, 'x-forwarded-for': client.ip, ...headers };
 }
 
 function sessionCookieFrom(response: Response): string | undefined {

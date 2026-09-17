@@ -431,6 +431,15 @@ describe('createSessionClient verifies sessions over a service binding with a KV
       expect((thrown as SessionUnavailableError).status).toBe(502);
     });
 
+    it('throws SessionUnavailableError on a 429, since a throttled miss is not "not signed in"', async () => {
+      const binding = { fetch: () => Promise.resolve(new Response('slow down', { status: 429 })) };
+      const client = buildSessionClient({ auth: binding, kv: new FakeKV(), basePath: BASE_PATH });
+
+      const thrown = await caught(client);
+      expect(thrown).toBeInstanceOf(SessionUnavailableError);
+      expect((thrown as SessionUnavailableError).status).toBe(429);
+    });
+
     it('still returns null for a 4xx, which is a negative answer', async () => {
       const binding = {
         fetch: () => Promise.resolve(new Response('Unauthorized', { status: 401 })),

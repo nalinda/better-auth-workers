@@ -14,6 +14,9 @@ function secondaryStorageOf(auth: AuthInstance): SecondaryStorage {
 const okRequest = (clientIp: string) =>
   new Request(`${VALID_BASE_URL}/api/auth/ok`, { headers: { 'x-forwarded-for': clientIp } });
 
+const request = (headers: Record<string, string>) =>
+  new Request(`${VALID_BASE_URL}/api/auth/ok`, { headers });
+
 describe('KV secondary storage for session cache and rate limiter', () => {
   describe('Secondary storage wiring over KV namespace', () => {
     it('wires options.kv as Better Auth secondaryStorage with get, set with TTL, and delete', async () => {
@@ -136,6 +139,49 @@ describe('KV secondary storage for session cache and rate limiter', () => {
       const storage = secondaryStorageOf(createAuth(buildEnv(), { kv: mockKv }));
 
       expect(await storage.increment('rate:legacy', 60)).toBe(1);
+    });
+  });
+
+  describe('Client IP resolution prefers cf-connecting-ip', () => {
+    it('sets ipAddressHeaders to cf-connecting-ip then x-forwarded-for by default', () => {
+      const auth = createAuth(buildEnv(), { kv: new FakeKV() });
+      expect(auth.options.advanced?.ipAddress?.ipAddressHeaders).toEqual([
+        'cf-connecting-ip',
+        'x-forwarded-for',
+      ]);
+    });
+
+    it('does not let a spoofed X-Forwarded-For collapse distinct clients into one bucket', async () => {
+      const auth = createAuth(buildEnv(), {
+        kv: new FakeKV(),
+        betterAuth: { rateLimit: { window: 60, max: 1 } },
+      });
+      // Two clients, each with a multi-valued X-Forwarded-For of their own
+      // making; with only that header they would share the no-trusted-ip
+      // bucket and the second client would be refused on its first request.
+      const spoofed = '10.0.0.1, 10.0.0.2';
+
+      const clientA = await auth.handler(
+        request({ 'cf-connecting-ip': '203.0.113.10', 'x-forwarded-for': spoofed })
+      );
+      const clientB = await auth.handler(
+        request({ 'cf-connecting-ip': '203.0.113.11', 'x-forwarded-for': spoofed })
+      );
+      const clientAAgain = await auth.handler(
+        request({ 'cf-connecting-ip': '203.0.113.10', 'x-forwarded-for': spoofed })
+      );
+
+      expect([clientA.status, clientB.status, clientAAgain.status]).toEqual([200, 200, 429]);
+    });
+
+    it('can be overridden through betterAuth.advanced.ipAddress', () => {
+      const auth = createAuth(buildEnv(), {
+        kv: new FakeKV(),
+        betterAuth: { advanced: { ipAddress: { ipAddressHeaders: ['x-real-ip'] } } },
+      });
+      expect(auth.options.advanced?.ipAddress?.ipAddressHeaders).toEqual(['x-real-ip']);
+      // The package's other advanced default survives the override.
+      expect(auth.options.advanced?.database?.validateSchema).toBe(false);
     });
   });
 

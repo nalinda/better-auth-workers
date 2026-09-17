@@ -72,6 +72,13 @@ function credentialFrom(request: Request, cookieName: string): Credential | unde
   return bearer ? { value: bearer, source: 'bearer' } : undefined;
 }
 
+// A 5xx is the auth Worker failing to answer, and so is a 429 (its rate
+// limiter throttled this miss); any other non-2xx (a 401 for a rejected
+// credential, say) is a negative answer.
+function isNoAnswer(status: number): boolean {
+  return status >= 500 || status === 429;
+}
+
 // A cache miss is answered by the auth Worker's store, never by Better
 // Auth's own cookie cache: only the session-token cookie is forwarded (not
 // `session_data`), and `disableCookieCache` is set for good measure. The
@@ -109,9 +116,7 @@ async function fetchSession(
       `auth Worker unreachable: ${error instanceof Error ? error.message : String(error)}`
     );
   }
-  // A 5xx is the auth Worker failing to answer; anything else non-2xx (a
-  // 401 for a rejected credential, say) is a negative answer.
-  if (response.status >= 500) {
+  if (isNoAnswer(response.status)) {
     throw new SessionUnavailableError(
       `auth Worker answered ${String(response.status)}`,
       response.status
