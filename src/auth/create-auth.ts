@@ -2,6 +2,7 @@ import { betterAuth } from 'better-auth';
 
 import { withHandlerContext } from '../shared/non-blocking';
 import type { AuthEnv } from '../types';
+import { buildAllowedMethodsHook } from './allowed-methods';
 import { buildRateLimitConfig, buildSessionConfig } from './config';
 import { resolveDatabase, resolveHyperdriveConnectionString } from './database';
 import { resolveBaseURL, resolveSecret } from './env';
@@ -34,14 +35,51 @@ function mergeAfterHook(
   };
 }
 
+// Composes any user-supplied `hooks.before` with the allowedMethods
+// restriction, so wiring the restriction never clobbers a hook a consumer
+// configured through `options.hooks` or `options.betterAuth.hooks`. The
+// restriction runs first so a disallowed method is rejected before the
+// user's hook sees the request.
+function mergeBeforeHook(
+  existing: { before?: (ctx: never) => Promise<unknown> } | undefined,
+  checkAllowedMethods: (ctx: never) => void
+): { before: (ctx: never) => Promise<unknown> } {
+  const existingBefore = existing?.before;
+  return {
+    // Better Auth's hook runner always awaits the return value of
+    // `hooks.before`, so this must resolve to a promise even when there is
+    // no user-supplied `before` hook to compose with (a bare synchronous
+    // function would make `withSpan` return the raw, non-promise value and
+    // crash the runner's `.catch` chain).
+    before: async (ctx: never) => {
+      checkAllowedMethods(ctx);
+      return await existingBefore?.(ctx);
+    },
+  };
+}
+
 function buildHooksField(
   options: CreateAuthOptions | undefined,
-  invalidateSessionCache: ((ctx: never) => Promise<void>) | undefined
-): Record<string, never> | { hooks: { after: (ctx: never) => Promise<unknown> } } {
-  if (!invalidateSessionCache) return {};
+  invalidateSessionCache: ((ctx: never) => Promise<void>) | undefined,
+  checkAllowedMethods: ((ctx: never) => void) | undefined
+):
+  | Record<string, never>
+  | {
+      hooks: {
+        after?: (ctx: never) => Promise<unknown>;
+        before?: (ctx: never) => unknown;
+      };
+    } {
+  if (!invalidateSessionCache && !checkAllowedMethods) return {};
   const existing = (options?.betterAuth?.hooks ?? options?.hooks) as
-    { after?: (ctx: never) => Promise<unknown> } | undefined;
-  return { hooks: mergeAfterHook(existing, invalidateSessionCache) };
+    | { after?: (ctx: never) => Promise<unknown>; before?: (ctx: never) => Promise<unknown> }
+    | undefined;
+  return {
+    hooks: {
+      ...(invalidateSessionCache && mergeAfterHook(existing, invalidateSessionCache)),
+      ...(checkAllowedMethods && mergeBeforeHook(existing, checkAllowedMethods)),
+    },
+  };
 }
 
 const instanceCache = new WeakMap<object, Map<string, AuthInstance>>();
@@ -87,6 +125,7 @@ export function createAuth(
   const session = buildSessionConfig(options);
   const rateLimit = buildRateLimitConfig(options, secondaryStorage);
   const invalidateSessionCache = buildSessionInvalidationHook(options, env);
+  const checkAllowedMethods = buildAllowedMethodsHook(options);
 
   const defaults = {
     basePath: '/api/auth',
@@ -109,7 +148,7 @@ export function createAuth(
     ...options?.betterAuth,
     session,
     ...(rateLimit !== undefined && { rateLimit }),
-    ...buildHooksField(options, invalidateSessionCache),
+    ...buildHooksField(options, invalidateSessionCache, checkAllowedMethods),
   };
 
   // @ts-expect-error betterAuth accepts custom database adapters like D1/Hyperdrive in Cloudflare Workers
