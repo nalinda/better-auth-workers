@@ -42,7 +42,7 @@ export function withPoolLifecycle(
   const originalHandler = instance.handler.bind(instance);
   instance.handler = async (request: Request, ctx?: ExecutionContext) => {
     try {
-      return await originalHandler(request);
+      return await originalHandler(request, ctx);
     } finally {
       const execCtx = ctx ?? optionsCtx;
       if (execCtx && typeof execCtx.waitUntil === 'function') {

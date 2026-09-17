@@ -1,5 +1,6 @@
 import { betterAuth } from 'better-auth';
 
+import { withHandlerContext } from '../shared/non-blocking';
 import type { AuthEnv } from '../types';
 import { buildRateLimitConfig, buildSessionConfig } from './config';
 import { buildDatabase, resolveHyperdriveConnectionString } from './database';
@@ -76,6 +77,8 @@ export function createAuth(
   // @ts-expect-error betterAuth accepts custom database adapters like D1/Hyperdrive in Cloudflare Workers
   const instance = betterAuth(authConfig);
   void instance.$context.catch(() => {});
+
+  withHandlerContext(instance, options?.ctx);
 
   if (pool) {
     withPoolLifecycle(instance, pool, options?.ctx);
