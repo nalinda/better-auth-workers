@@ -14,17 +14,17 @@ export function resolveKv(
   return kv;
 }
 
-const KV_MISSING_MESSAGE =
-  'kv is required: specify options.kv or env.AUTH_KV (or supply options.secondaryStorage)';
+const KV_MISSING_MESSAGE = 'kv is required: specify options.kv or env.AUTH_KV';
 
 // A missing namespace would otherwise degrade silently: sessions fall back
 // to the primary store, rate limits become per-isolate, and sign-out stops
 // clearing the consumer-side cache. A consumer-supplied secondaryStorage
-// stands in for the first two, so it satisfies the check too.
+// can stand in for the first two but not the third — the invalidation hook
+// deletes from the KV namespace the consumer Workers share — so it does
+// not satisfy this check.
 export function kvProblem(
   options?: CreateAuthOptions,
   envObj?: Partial<AuthEnv>
 ): string | undefined {
-  if (options?.secondaryStorage) return;
   return resolveKv(options, envObj) ? undefined : KV_MISSING_MESSAGE;
 }

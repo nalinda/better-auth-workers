@@ -67,6 +67,17 @@ describe('Memoisation', () => {
     expect(a).not.toBe(b);
   });
 
+  it('keeps only the most recent option shapes per env, so identity-keyed objects cannot grow it unbounded', () => {
+    const env = buildEnv();
+    const first = createAuth(env, { secondaryStorage: new FakeKV() as never });
+    for (let i = 0; i < 8; i += 1) createAuth(env, { secondaryStorage: new FakeKV() as never });
+
+    // The first shape was evicted: the same storage object builds afresh.
+    const storage = first.options.secondaryStorage;
+    const rebuilt = createAuth(env, { secondaryStorage: storage as never });
+    expect(rebuilt).not.toBe(first);
+  });
+
   it('does not serialise binding contents or secrets into the cache key', () => {
     // A binding whose enumerable fields throw when read: serialising it
     // would blow up, keying it by identity does not.
@@ -191,21 +202,6 @@ describe('Merge order and defaults', () => {
     expect(options.socialProviders).toBeDefined();
   });
 
-  it('still passes a user hooks field through when none of the package hooks are active', async () => {
-    const before = mock(async (_ctx: unknown) => {
-      await Promise.resolve();
-    });
-    const env = buildEnv({ AUTH_KV: undefined as unknown as KVNamespace });
-    const auth = createAuth(env, {
-      secondaryStorage: new FakeKV() as never,
-      betterAuth: { hooks: { before } },
-    });
-
-    await auth.handler(getSession());
-
-    expect(before).toHaveBeenCalledTimes(1);
-  });
-
   it('applies package default basePath of /api/auth when not specified', () => {
     const auth = createAuth(validEnv, {});
     expect(auth.options.basePath).toBe('/api/auth');
@@ -309,15 +305,11 @@ describe('Hook composition', () => {
     expect(before).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps a user hooks.after when only allowedMethods (a before hook of ours) is configured', async () => {
+  it('keeps a user hooks.after when allowedMethods (a before hook of ours) is configured', async () => {
     const after = mock(async (_ctx: unknown) => {
       await Promise.resolve();
     });
-    // allowedMethods on, KV replaced by a custom secondaryStorage so no
-    // after hook of ours is active.
-    const env = buildEnv({ AUTH_KV: undefined as unknown as KVNamespace });
-    const auth = createAuth(env, {
-      secondaryStorage: new FakeKV() as never,
+    const auth = createAuth(buildEnv(), {
       allowedMethods: ['google'],
       betterAuth: { hooks: { after } },
     });

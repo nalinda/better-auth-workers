@@ -15,6 +15,15 @@ function getRequest(path: string): Request {
   return new Request(`${VALID_BASE_URL}/api/auth${path}`);
 }
 
+// A Worker configured with Google only: no phone or magicLink plugin at all.
+function googleOnlyAuth(env: ReturnType<typeof buildEnv>) {
+  return createAuth(env, {
+    google: { clientId: 'client-id', clientSecret: 'client-secret' },
+    allowedMethods: ['google'],
+    betterAuth: { account: { storeStateStrategy: 'cookie' } },
+  });
+}
+
 describe('allowedMethods restricts sign-in routes per deployment', () => {
   let validEnv: ReturnType<typeof buildEnv>;
 
@@ -169,8 +178,37 @@ describe('allowedMethods restricts sign-in routes per deployment', () => {
     });
   });
 
-  describe('a method that is not configured has no routes, allowed or not', () => {
-    it('returns 404 for phone routes when phone is not configured, even if allowedMethods lists it', async () => {
+  describe('a disallowed method stays mounted even when its plugin is not configured', () => {
+    // The acceptance criterion: a Worker configured with Google only
+    // rejects phone OTP sign-in with 403 (not 404) while Google sign-in and
+    // get-session still succeed.
+    it.each([
+      ['POST', '/phone-number/send-otp', { phoneNumber: '+15551234567' }],
+      ['POST', '/phone-number/verify', { phoneNumber: '+15551234567', code: '123456' }],
+      ['POST', '/sign-in/phone-number', { phoneNumber: '+15551234567', password: 'x' }],
+      ['POST', '/sign-in/magic-link', { email: 'user@example.com' }],
+      ['GET', '/magic-link/verify?token=abc', {}],
+    ])(
+      'answers %s %s with 403 on a Google-only Worker with no phone or magicLink configured',
+      async (method, path, body) => {
+        const auth = googleOnlyAuth(validEnv);
+
+        const res = await auth.handler(method === 'GET' ? getRequest(path) : postJSON(path, body));
+
+        expect(res.status).toBe(403);
+      }
+    );
+
+    it('still serves Google sign-in and get-session on that Worker', async () => {
+      const auth = googleOnlyAuth(validEnv);
+
+      const social = await auth.handler(postJSON('/sign-in/social', { provider: 'google' }));
+      const session = await auth.handler(getRequest('/get-session'));
+
+      expect([social.status, session.status]).toEqual([200, 200]);
+    });
+
+    it('does not mount stubs for a method that is allowed but simply not configured', async () => {
       const auth = createAuth(validEnv, {
         google: { clientId: 'client-id', clientSecret: 'client-secret' },
         allowedMethods: ['phone', 'google'],
@@ -180,19 +218,7 @@ describe('allowedMethods restricts sign-in routes per deployment', () => {
         postJSON('/phone-number/send-otp', { phoneNumber: '+15551234567' })
       );
 
-      expect(res.status).toBe(404);
-    });
-
-    it('returns 404, not 403, for magic-link routes when magicLink is not configured and not allowed', async () => {
-      const auth = createAuth(validEnv, {
-        google: { clientId: 'client-id', clientSecret: 'client-secret' },
-        allowedMethods: ['google'],
-      });
-
-      const res = await auth.handler(
-        postJSON('/sign-in/magic-link', { email: 'user@example.com' })
-      );
-
+      // Nothing serves phone here: it is allowed, just not configured.
       expect(res.status).toBe(404);
     });
   });

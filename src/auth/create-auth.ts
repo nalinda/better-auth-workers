@@ -123,11 +123,21 @@ function getCachedInstance(env: object, optionsKey: string): CachedInstance | un
   return instanceCache.get(env)?.get(optionsKey);
 }
 
+// Options shapes memoised per env. Non-plain objects under `options` (a
+// `secondaryStorage` instance, a wrapped `kv`) are keyed by identity, so a
+// consumer constructing one inline per request would otherwise grow this
+// map for the life of the isolate; the oldest shape is evicted instead.
+const MAX_SHAPES_PER_ENV = 8;
+
 function setCachedInstance(env: object, optionsKey: string, cached: CachedInstance): void {
   let envMap = instanceCache.get(env);
   if (!envMap) {
     envMap = new Map();
     instanceCache.set(env, envMap);
+  }
+  if (envMap.size >= MAX_SHAPES_PER_ENV) {
+    const oldest = envMap.keys().next().value;
+    if (oldest !== undefined) envMap.delete(oldest);
   }
   envMap.set(optionsKey, cached);
 }

@@ -63,7 +63,8 @@ async function fetchSession(
   try {
     const response = await options.auth.fetch(new Request(url, { headers }));
     if (!response.ok) return null;
-    return toSessionData((await response.json()) as JsonValue);
+    const payload: JsonValue = await response.json();
+    return toSessionData(payload);
   } catch {
     return null;
   }

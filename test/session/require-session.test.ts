@@ -81,7 +81,7 @@ describe('requireSession Hono middleware', () => {
     const app = buildApp(clientReturning(session));
 
     const response = await app.request('/protected');
-    const body = (await response.json()) as { userId: string };
+    const body: { userId: string } = await response.json();
 
     expect(response.status).toBe(200);
     expect(body.userId).toBe('user-1');
@@ -101,7 +101,7 @@ describe('requireSession Hono middleware', () => {
     const app = buildApp(clientReturning(session), (s) => s.user.role === 'admin');
 
     const response = await app.request('/protected');
-    const body = (await response.json()) as { userId: string };
+    const body: { userId: string } = await response.json();
 
     expect(response.status).toBe(200);
     expect(body.userId).toBe('user-1');
@@ -112,7 +112,8 @@ describe('requireSession Hono middleware', () => {
 
     const ok = await app.request('/direct');
     expect(ok.status).toBe(200);
-    expect(((await ok.json()) as { userId: string }).userId).toBe('user-1');
+    const okBody: { userId: string } = await ok.json();
+    expect(okBody.userId).toBe('user-1');
 
     const denied = await buildApp(clientReturning(null)).request('/direct');
     expect(denied.status).toBe(401);

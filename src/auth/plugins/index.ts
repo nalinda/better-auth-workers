@@ -2,6 +2,7 @@ import type { BetterAuthPlugin } from 'better-auth';
 import { admin, bearer } from 'better-auth/plugins';
 
 import type { ContextRef } from '../../shared/non-blocking';
+import { buildDisallowedMethodStubs } from '../disallowed-method-stubs';
 import type { CreateAuthOptions } from '../types';
 import { buildMagicLinkPlugin } from './magic-link';
 import { buildPhonePlugin } from './phone';
@@ -17,6 +18,8 @@ export function buildPlugins(
   if (phonePlugin) plugins.push(phonePlugin);
   const magicLinkPlugin = buildMagicLinkPlugin(options?.magicLink, ctxRef);
   if (magicLinkPlugin) plugins.push(magicLinkPlugin);
+  const stubs = buildDisallowedMethodStubs(options);
+  if (stubs) plugins.push(stubs);
   if (options?.bearer) plugins.push(bearer());
   if (options?.plugins) plugins.push(...options.plugins);
   return plugins;

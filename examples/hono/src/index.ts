@@ -29,9 +29,8 @@ app.on(['GET', 'POST'], '/auth/*', (c) => {
     },
     google: hasGoogle ? true : undefined,
     bearer: true,
-    // Sign-in methods this deployment accepts. A configured method left out
-    // of this list is refused with 403; a method that is not configured at
-    // all has no routes and 404s.
+    // Sign-in methods this deployment accepts; any other method's routes
+    // answer 403, whether or not that method's plugin is configured.
     allowedMethods: hasGoogle ? ['phone', 'magic-link', 'google'] : ['phone', 'magic-link'],
   });
 

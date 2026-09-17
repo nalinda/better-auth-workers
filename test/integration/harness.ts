@@ -44,7 +44,7 @@ const READY_TIMEOUT_MS = 90_000;
 const INTEGRATION_SECRET = 'integration-secret-value-must-be-at-least-32-chars-long';
 
 export function requestedBackends(): Backend[] {
-  const raw = process.env.INTEGRATION_BACKENDS ?? '';
+  const raw = Bun.env.INTEGRATION_BACKENDS ?? '';
   return raw
     .split(',')
     .map((value) => value.trim())
@@ -112,7 +112,7 @@ function dockerBin(): string {
 
 function startPostgresContainer(): { adminUrl: string; stop: () => Promise<void> } {
   const docker = dockerBin();
-  const name = `better-auth-workers-it-${process.pid}-${Date.now()}`;
+  const name = `better-auth-workers-it-${crypto.randomUUID().slice(0, 8)}-${String(Date.now())}`;
   const run = spawnSync(
     docker,
     [
@@ -148,7 +148,7 @@ function startPostgresContainer(): { adminUrl: string; stop: () => Promise<void>
 }
 
 async function provisionPostgres(): Promise<PostgresHandle> {
-  const external = process.env.INTEGRATION_POSTGRES_URL;
+  const external = Bun.env.INTEGRATION_POSTGRES_URL;
   const container = external ? undefined : startPostgresContainer();
   const adminUrl = external ?? (container as { adminUrl: string }).adminUrl;
   await waitForPostgres(adminUrl);
@@ -245,7 +245,7 @@ function applyD1Migration(persistTo: string): void {
       '--file',
       path.resolve(rootDir, 'migrations/sqlite/0001_init.sql'),
     ],
-    { cwd: rootDir, encoding: 'utf8', env: { ...process.env, CI: '1' } }
+    { cwd: rootDir, encoding: 'utf8', env: { ...Bun.env, CI: '1' } }
   );
   if (result.status !== 0) {
     throw new Error(`d1 migration failed:\n${result.stdout}\n${result.stderr}`);
@@ -281,7 +281,7 @@ function spawnWrangler(
     ],
     {
       cwd: rootDir,
-      env: { ...process.env, CI: '1', ...extraEnv },
+      env: { ...Bun.env, CI: '1', ...extraEnv },
       stdio: ['ignore', 'pipe', 'pipe'],
     }
   );
@@ -382,7 +382,7 @@ export async function startDevServer(backend: Backend): Promise<DevServer> {
 
   const counters = async (): Promise<Counters> => {
     const response = await fetch(`${baseUrl}/__auth/counters`);
-    const body = (await response.json()) as Counters;
+    const body: Counters = await response.json();
     return proxy ? { ...body, primaryQueries: proxy.statements() } : body;
   };
 

@@ -459,12 +459,18 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
     });
   });
 
-  describe('no shared KV namespace configured', () => {
-    it('does not wire cache invalidation when a custom secondaryStorage stands in for KV', () => {
-      const env = buildEnv({ AUTH_KV: undefined as unknown as KVNamespace });
-      const auth = createAuth(env, { secondaryStorage: new FakeKV() as never });
-      expect(auth.options.hooks?.after).toBeUndefined();
-      expect(auth.options.hooks?.before).toBeUndefined();
+  describe('a custom secondaryStorage does not replace the shared KV namespace', () => {
+    it('keeps invalidating through kv when Better Auth’s storage is a consumer-supplied one', async () => {
+      const kv = await seededKv([TOKEN]);
+      const auth = createAuth(buildEnv({ AUTH_KV: kv.asBinding() }), {
+        secondaryStorage: new FakeKV() as never,
+      });
+
+      await auth.options.hooks!.after!(
+        endpointContext(fakeStore(), '/sign-out', { cookieToken: TOKEN }) as never
+      );
+
+      expect(kv.deletes).toEqual([sessionCacheKey(TOKEN)]);
     });
   });
 });

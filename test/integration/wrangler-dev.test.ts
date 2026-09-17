@@ -104,7 +104,7 @@ async function requestMagicLink(server: DevServer, email: string): Promise<URL> 
 
 async function authCalls(server: DevServer): Promise<number> {
   const response = await fetch(`${server.baseUrl}/__gateway/auth-calls`);
-  const body = (await response.json()) as { count: number };
+  const body: { count: number } = await response.json();
   return body.count;
 }
 
@@ -131,7 +131,7 @@ describe.each(requestedBackends())('example Worker under wrangler dev (%s)', (ba
     const verified = await signInWithPhone(server, phoneNumber);
     expect(verified.status).toBe(200);
 
-    const body = (await verified.json()) as VerifyResponse;
+    const body: VerifyResponse = await verified.json();
     expect(body.status).toBe(true);
     expect(typeof body.token).toBe('string');
     expect(body.user?.phoneNumber).toBe(phoneNumber);
@@ -158,7 +158,8 @@ describe.each(requestedBackends())('example Worker under wrangler dev (%s)', (ba
 
     const signedOut = await postJson(server, '/auth/sign-out', {}, { cookie: cookie as string });
     expect(signedOut.status).toBe(200);
-    expect(await signedOut.json()).toEqual({ success: true });
+    const signedOutBody: { success?: boolean } = await signedOut.json();
+    expect(signedOutBody).toEqual({ success: true });
 
     const { response, body } = await getSession(server, { cookie: cookie as string });
     expect(response.status).toBe(200);
@@ -254,7 +255,8 @@ describe.each(requestedBackends())('example Worker under wrangler dev (%s)', (ba
 
     const cold = await fetch(`${server.baseUrl}/me`, { headers: { cookie: cookie as string } });
     expect(cold.status).toBe(200);
-    expect(((await cold.json()) as { phoneNumber?: string }).phoneNumber).toBe(phoneNumber);
+    const coldBody: { phoneNumber?: string } = await cold.json();
+    expect(coldBody.phoneNumber).toBe(phoneNumber);
 
     const before = await authCalls(server);
     const warm = await fetch(`${server.baseUrl}/me`, { headers: { cookie: cookie as string } });
