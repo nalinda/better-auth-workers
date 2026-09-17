@@ -69,7 +69,7 @@ const createAuthInstance = (env: Record<string, unknown>, options?: CreateAuthOp
     options
   );
 
-describe('Issue #3: Postgres through Hyperdrive with a per-request pg Pool', () => {
+describe('Postgres through Hyperdrive with a per-request pg Pool', () => {
   const validSecret = 'test-secret-at-least-32-chars-long-1234567890';
   const validBaseUrl = 'https://auth.example.com';
   const validEnv = {

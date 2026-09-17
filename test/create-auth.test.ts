@@ -31,7 +31,7 @@ const createAuthInstance = (env: Record<string, unknown>, options?: CreateAuthOp
     options
   );
 
-describe('Issue #2: createAuth: per-request Better Auth instance memoised on env', () => {
+describe('createAuth: per-request Better Auth instance memoised on env', () => {
   const validSecret = 'test-secret-at-least-32-chars-long-1234567890';
   const validBaseUrl = 'https://auth.example.com';
   const mockD1 = {

@@ -27,7 +27,7 @@ function readWorkflows(): string {
   return files.map((f) => fs.readFileSync(path.join(workflowsDir, f), 'utf8')).join('\n');
 }
 
-describe('Issue #1: Package scaffolding and metadata', () => {
+describe('Package scaffolding and metadata', () => {
   it('package.json exists with package name and module type', () => {
     const pkg = readPackageJson();
     expect(pkg?.name).toBe('better-auth-workers');

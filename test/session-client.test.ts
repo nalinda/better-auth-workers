@@ -86,7 +86,7 @@ function fakeAuthBinding(expiresAt: Date) {
   return { binding: { fetch }, fetch, seen };
 }
 
-describe('Issue #9: createSessionClient verifies sessions over a service binding with a KV cache', () => {
+describe('createSessionClient verifies sessions over a service binding with a KV cache', () => {
   describe('get(request) with a valid session cookie', () => {
     it('forwards the Cookie header to the auth Worker get-session route over the service binding and returns the session', async () => {
       const expiresAt = new Date(Date.now() + 3600_000);

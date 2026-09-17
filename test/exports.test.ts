@@ -28,7 +28,7 @@ async function loadEntryPoint(subpath = '.'): Promise<Record<string, unknown>> {
   return {};
 }
 
-describe('Issue #1: Entry points export documented functions', () => {
+describe('Entry points export documented functions', () => {
   it('exports createAuth as a function from . entry point', async () => {
     const root = await loadEntryPoint('.');
     expect(typeof root.createAuth).toBe('function');

@@ -37,7 +37,7 @@ function createMockD1() {
   };
 }
 
-describe('Issue #4: D1 as the primary store', () => {
+describe('D1 as the primary store', () => {
   const validSecret = 'test-secret-at-least-32-chars-long-1234567890';
   const validBaseUrl = 'https://auth.example.com';
   const validEnv = {
