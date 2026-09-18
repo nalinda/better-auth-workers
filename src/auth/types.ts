@@ -1,4 +1,4 @@
-import type { BetterAuthPlugin } from 'better-auth';
+import type { BetterAuthOptions, BetterAuthPlugin } from 'better-auth';
 
 import type { ConfigValue, KVStore, WaitUntilContext } from '../types';
 import type { PgPoolConstructor } from './postgres-pool';
@@ -79,5 +79,19 @@ export interface CreateAuthOptions {
   plugins?: BetterAuthPlugin[];
   // The single escape hatch: any Better Auth option (`session`, `rateLimit`,
   // `hooks`, `advanced`, ...). Merged last, so it can override anything.
-  betterAuth?: Record<string, ConfigValue>;
+  // Typed against Better Auth's own options, so a misspelled key here is a
+  // type error too, not just at the top level — except for the four fields
+  // this package builds and merges itself, which the internal config
+  // assembly treats as a loose `ConfigValue` (see `config.ts`) rather than
+  // Better Auth's stricter shape for them.
+  betterAuth?: Partial<
+    Omit<BetterAuthOptions, 'database' | 'plugins' | 'secondaryStorage' | 'hooks'>
+  > & {
+    // `NonNullable`, since `ConfigValue` already includes `undefined` and
+    // the `?` on the key is what conveys optionality here.
+    database?: NonNullable<ConfigValue>;
+    plugins?: BetterAuthPlugin[];
+    secondaryStorage?: CreateAuthSecondaryStorage;
+    hooks?: CreateAuthHooks;
+  };
 }

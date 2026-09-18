@@ -1,5 +1,6 @@
 import { mock } from 'bun:test';
 
+import type { CreateAuthSecondaryStorage } from '../../src/auth/types';
 import type { AuthEnv, KVStore, WaitUntilContext } from '../../src/index';
 
 // Shared fixtures for the createAuth unit tests. Every test builds its env
@@ -49,6 +50,15 @@ export class FakeKV implements KVStore {
   // confined to here.
   asBinding(): KVNamespace {
     return this as unknown as KVNamespace;
+  }
+
+  // Used where a test only needs *some* distinct object under
+  // `betterAuth.secondaryStorage` (identity-keyed memoisation, "kv is still
+  // required regardless of what's here"), not one that implements Better
+  // Auth's actual get/set/delete storage contract; the cast is confined to
+  // here.
+  asSecondaryStorage(): CreateAuthSecondaryStorage {
+    return this as unknown as CreateAuthSecondaryStorage;
   }
 }
 

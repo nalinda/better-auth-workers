@@ -83,6 +83,17 @@ function bodyTargetUserId(ctx: HookContext): string | undefined {
   return ctx.body?.userId;
 }
 
+type RevocationScope = 'admin' | 'current';
+
+// The one place a path is classified against BODY_USER_PATHS /
+// CURRENT_USER_PATHS; collectSessionTokens classifies once and hands the
+// result to resolveTargetUserId, instead of each re-deriving it from the
+// path.
+function revocationScope(path: string): RevocationScope | undefined {
+  if (BODY_USER_PATHS.has(path)) return 'admin';
+  if (CURRENT_USER_PATHS.has(path)) return 'current';
+}
+
 // Tokens collected by the before hook, keyed on the per-request endpoint
 // context Better Auth hands to both hooks of one dispatch.
 const pendingTokens = new WeakMap<object, string[]>();
@@ -143,10 +154,10 @@ async function currentSessionToken(
 // plugin's own authorization then decides whether the revocation happens.
 async function resolveTargetUserId(
   ctx: HookContext,
+  scope: RevocationScope,
   canUseBearer: boolean
 ): Promise<string | undefined> {
-  const isAdminRoute = BODY_USER_PATHS.has(ctx.path);
-  if (!isAdminRoute && !CURRENT_USER_PATHS.has(ctx.path)) return;
+  const isAdminRoute = scope === 'admin';
   const target = isAdminRoute ? bodyTargetUserId(ctx) : undefined;
   if (isAdminRoute && !target) return;
   const token = await currentSessionToken(ctx, canUseBearer);
@@ -189,9 +200,10 @@ export function buildSessionTokenCollector(
 }
 
 async function collectSessionTokens(ctx: HookContext, canUseBearer: boolean): Promise<void> {
-  if (!BODY_USER_PATHS.has(ctx.path) && !CURRENT_USER_PATHS.has(ctx.path)) return;
+  const scope = revocationScope(ctx.path);
+  if (!scope) return;
   assertInvalidationInternals(ctx);
-  const userId = await resolveTargetUserId(ctx, canUseBearer);
+  const userId = await resolveTargetUserId(ctx, scope, canUseBearer);
   if (!userId) return;
   const sessions = await ctx.context.internalAdapter.listSessions(userId);
   pendingTokens.set(

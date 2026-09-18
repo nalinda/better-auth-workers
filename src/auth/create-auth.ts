@@ -128,7 +128,7 @@ function buildHooksField(
   options: CreateAuthOptions | undefined,
   ours: OwnHooks
 ): Record<string, never> | { hooks: CreateAuthHooks } {
-  const user = (options?.betterAuth?.hooks ?? {}) as CreateAuthHooks;
+  const user = options?.betterAuth?.hooks ?? {};
   if (ours.before.length === 0 && ours.after.length === 0) {
     return user.before || user.after ? { hooks: user } : {};
   }

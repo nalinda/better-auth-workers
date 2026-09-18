@@ -15,7 +15,7 @@ function betterAuthField(
   // `field` is a closed literal union, so this is not an injection sink.
   // eslint-disable-next-line security/detect-object-injection -- field is a closed literal union
   const value = options?.betterAuth?.[field];
-  return value && typeof value === 'object' ? (value as Loose) : undefined;
+  return value && typeof value === 'object' ? value : undefined;
 }
 
 export function buildSessionConfig(options?: CreateAuthOptions): Loose {

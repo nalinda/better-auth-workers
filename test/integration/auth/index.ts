@@ -10,33 +10,38 @@ import app from '../../../examples/hono/src/index';
 // driver is the example's). The counters are read at `/__auth/counters`.
 const counters = { primaryQueries: 0, kvReads: 0 };
 
-function countingD1(db: D1Database): D1Database {
-  return new Proxy(db, {
-    get(target, prop, receiver) {
-      const value = Reflect.get(target, prop, receiver) as unknown;
+// Wraps every method of `target` so `onCall` observes each one invoked,
+// before the real call runs. `countingD1` and `countingKv` differ only in
+// which method names count against which counter.
+function counting<T extends object>(
+  target: T,
+  onCall: (prop: PropertyKey, args: unknown[]) => void
+): T {
+  return new Proxy(target, {
+    get(proxyTarget, prop, receiver) {
+      const value = Reflect.get(proxyTarget, prop, receiver) as unknown;
       if (typeof value !== 'function') return value;
       return (...args: unknown[]) => {
-        if (prop === 'prepare' || prop === 'exec') {
-          counters.primaryQueries += 1;
-        } else if (prop === 'batch') {
-          counters.primaryQueries += (args[0] as unknown[]).length;
-        }
-        return Reflect.apply(value as (...fnArgs: unknown[]) => unknown, target, args);
+        onCall(prop, args);
+        return Reflect.apply(value as (...fnArgs: unknown[]) => unknown, proxyTarget, args);
       };
     },
   });
 }
 
+function countingD1(db: D1Database): D1Database {
+  return counting(db, (prop, args) => {
+    if (prop === 'prepare' || prop === 'exec') {
+      counters.primaryQueries += 1;
+    } else if (prop === 'batch') {
+      counters.primaryQueries += (args[0] as unknown[]).length;
+    }
+  });
+}
+
 function countingKv(kv: KVNamespace): KVNamespace {
-  return new Proxy(kv, {
-    get(target, prop, receiver) {
-      const value = Reflect.get(target, prop, receiver) as unknown;
-      if (typeof value !== 'function') return value;
-      return (...args: unknown[]) => {
-        if (prop === 'get' || prop === 'getWithMetadata') counters.kvReads += 1;
-        return Reflect.apply(value as (...fnArgs: unknown[]) => unknown, target, args);
-      };
-    },
+  return counting(kv, (prop) => {
+    if (prop === 'get' || prop === 'getWithMetadata') counters.kvReads += 1;
   });
 }
 

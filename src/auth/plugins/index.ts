@@ -25,7 +25,6 @@ export function buildPlugins(
   // `betterAuth.plugins` is appended the same way, so the escape hatch adds
   // plugins rather than replacing the ones the package relies on.
   const escapeHatchPlugins = options?.betterAuth?.plugins;
-  if (Array.isArray(escapeHatchPlugins))
-    plugins.push(...(escapeHatchPlugins as BetterAuthPlugin[]));
+  if (Array.isArray(escapeHatchPlugins)) plugins.push(...escapeHatchPlugins);
   return plugins;
 }

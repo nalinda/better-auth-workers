@@ -1,5 +1,6 @@
 import { describe, expect, it, mock } from 'bun:test';
 
+import type { CreateAuthSecondaryStorage } from '../../src/auth/types';
 import {
   type AuthEnv,
   type AuthInstance,
@@ -74,13 +75,15 @@ describe('Memoisation', () => {
 
   it('keeps only the most recent option shapes per env, so identity-keyed objects cannot grow it unbounded', () => {
     const env = buildEnv();
-    const first = createAuth(env, { betterAuth: { secondaryStorage: new FakeKV() } });
+    const first = createAuth(env, {
+      betterAuth: { secondaryStorage: new FakeKV().asSecondaryStorage() },
+    });
     for (let i = 0; i < 8; i += 1)
-      createAuth(env, { betterAuth: { secondaryStorage: new FakeKV() } });
+      createAuth(env, { betterAuth: { secondaryStorage: new FakeKV().asSecondaryStorage() } });
 
     // The first shape was evicted: the same storage object builds afresh.
-    const storage = first.options.secondaryStorage;
-    const rebuilt = createAuth(env, { betterAuth: { secondaryStorage: storage as object } });
+    const storage = first.options.secondaryStorage as unknown as CreateAuthSecondaryStorage;
+    const rebuilt = createAuth(env, { betterAuth: { secondaryStorage: storage } });
     expect(rebuilt).not.toBe(first);
   });
 
