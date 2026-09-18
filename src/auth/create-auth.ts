@@ -7,7 +7,12 @@ import { BoundedMap } from '../shared/bounded-map';
 import { type ContextRef, withHandlerContext } from '../shared/non-blocking';
 import type { AuthEnv, ConfigValue, WaitUntilContext } from '../types';
 import { buildAllowedMethodsHook } from './allowed-methods';
-import { buildAdvancedConfig, buildRateLimitConfig, buildSessionConfig } from './config';
+import {
+  buildAdvancedConfig,
+  buildRateLimitConfig,
+  buildSessionConfig,
+  buildSocialProvidersConfig,
+} from './config';
 import {
   resolveDatabase,
   type ResolvedDatabase,
@@ -193,7 +198,7 @@ function buildAuthConfig(
   const baseURL = resolveBaseURL(options, env) as string;
   const secret = resolveSecret(options, env) as string;
   const plugins = buildPlugins(options, ctxRef);
-  const socialProviders = buildSocialProviders(options, env);
+  const socialProviders = buildSocialProvidersConfig(options, buildSocialProviders(options, env));
   const secondaryStorage = buildSecondaryStorage(options, env);
   const session = buildSessionConfig(options);
   const rateLimit = buildRateLimitConfig(options, secondaryStorage);
@@ -204,12 +209,15 @@ function buildAuthConfig(
     secret,
     ...(database !== undefined && { database }),
     ...(secondaryStorage !== undefined && { secondaryStorage }),
-    ...(socialProviders !== undefined && { socialProviders }),
     ...options?.betterAuth,
     // Placed after the escape hatch on purpose: `betterAuth.plugins` is
     // folded into this list by buildPlugins, never allowed to replace the
-    // package's own (admin, sign-in methods, allowedMethods stubs, bearer).
+    // package's own (admin, sign-in methods, allowedMethods stubs, bearer);
+    // `socialProviders` is shallow-merged with `betterAuth.socialProviders`
+    // by provider name the same way, rather than let the escape hatch
+    // replace it wholesale.
     plugins,
+    ...(socialProviders !== undefined && { socialProviders }),
     advanced: buildAdvancedConfig(options),
     session,
     ...(rateLimit !== undefined && { rateLimit }),

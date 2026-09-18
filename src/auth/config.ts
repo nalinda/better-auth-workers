@@ -10,7 +10,7 @@ type Loose = Record<string, ConfigValue>;
 
 function betterAuthField(
   options: CreateAuthOptions | undefined,
-  field: 'session' | 'rateLimit' | 'advanced'
+  field: 'session' | 'rateLimit' | 'advanced' | 'socialProviders'
 ): Loose | undefined {
   // `field` is a closed literal union, so this is not an injection sink.
   // eslint-disable-next-line security/detect-object-injection -- field is a closed literal union
@@ -64,4 +64,18 @@ export function buildAdvancedConfig(options?: CreateAuthOptions): Loose {
     database: { validateSchema: false, ...database },
     ipAddress: { ipAddressHeaders: DEFAULT_IP_ADDRESS_HEADERS, ...ipAddress },
   };
+}
+
+// Every other field the package contributes and `betterAuth` can also touch
+// is additive (plugins appended, session/rateLimit/advanced shallow-merged);
+// `socialProviders` shallow-merges the same way, by provider name, so
+// `betterAuth: { socialProviders: { github: {...} } }` adds a provider
+// instead of silently replacing the package's own `google` config.
+export function buildSocialProvidersConfig(
+  options: CreateAuthOptions | undefined,
+  socialProviders: Loose | undefined
+): Loose | undefined {
+  const fromBetterAuth = betterAuthField(options, 'socialProviders');
+  if (!socialProviders && !fromBetterAuth) return undefined;
+  return { ...socialProviders, ...fromBetterAuth };
 }

@@ -56,8 +56,17 @@ export function sessionCredentialFromCookie(
 // Worker's invalidation hook both go through it.
 export function bearerCredentialFromHeader(header: string | null | undefined): string | undefined {
   if (!header) return;
-  const [scheme, token] = header.split(' ', 2);
-  if (!scheme || !token || scheme.toLowerCase() !== 'bearer') return;
+  // Split on the first space only and trim what follows, matching Better
+  // Auth's own `slice(7).trim()` parser: `header.split(' ', 2)` would
+  // instead split on every space in the header before truncating to two
+  // elements, so a double space between the scheme and the token (or any
+  // extra whitespace) silently produced an empty token.
+  const spaceIndex = header.indexOf(' ');
+  if (spaceIndex === -1) return;
+  const scheme = header.slice(0, spaceIndex);
+  if (scheme.toLowerCase() !== 'bearer') return;
+  const token = header.slice(spaceIndex + 1).trim();
+  if (!token) return;
   if (!token.includes('%')) return token;
   try {
     return decodeURIComponent(token);

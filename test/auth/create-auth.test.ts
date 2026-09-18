@@ -208,6 +208,27 @@ describe('Merge order and defaults', () => {
     expect(options.socialProviders).toBeDefined();
   });
 
+  it('shallow-merges betterAuth.socialProviders with the google option instead of replacing it', () => {
+    const auth = createAuth(validEnv, {
+      google: { clientId: 'id', clientSecret: 'secret' },
+      betterAuth: { socialProviders: { github: { clientId: 'gh-id', clientSecret: 'gh-secret' } } },
+    });
+    const socialProviders = auth.options.socialProviders as Record<string, unknown>;
+    expect(socialProviders.google).toEqual({ clientId: 'id', clientSecret: 'secret' });
+    expect(socialProviders.github).toEqual({ clientId: 'gh-id', clientSecret: 'gh-secret' });
+  });
+
+  it('lets betterAuth.socialProviders override the same provider key it sets', () => {
+    const auth = createAuth(validEnv, {
+      google: { clientId: 'id', clientSecret: 'secret' },
+      betterAuth: {
+        socialProviders: { google: { clientId: 'override', clientSecret: 'override' } },
+      },
+    });
+    const socialProviders = auth.options.socialProviders as Record<string, unknown>;
+    expect(socialProviders.google).toEqual({ clientId: 'override', clientSecret: 'override' });
+  });
+
   it('applies package default basePath of /api/auth when not specified', () => {
     const auth = createAuth(validEnv, {});
     expect(auth.options.basePath).toBe('/api/auth');
