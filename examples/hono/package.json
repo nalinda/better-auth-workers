@@ -1,0 +1,24 @@
+{
+  "name": "example-hono",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --env d1",
+    "dev:d1": "wrangler dev --env d1",
+    "dev:hyperdrive": "wrangler dev --env hyperdrive",
+    "dev:api": "wrangler dev -c api.wrangler.jsonc --env d1 --port 8788",
+    "dev:api:hyperdrive": "wrangler dev -c api.wrangler.jsonc --env hyperdrive --port 8788"
+  },
+  "dependencies": {
+    "better-auth": "^1.7.0",
+    "better-auth-workers": "file:../..",
+    "hono": "^4.0.0",
+    "pg": "^8.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260917.1",
+    "typescript": "~6.0.2",
+    "wrangler": "^4.0.0"
+  }
+}

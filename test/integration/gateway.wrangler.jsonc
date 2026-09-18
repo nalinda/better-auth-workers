@@ -1,0 +1,20 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "integration-gateway",
+  "main": "gateway/index.ts",
+  "compatibility_date": "2026-07-16",
+  "env": {
+    "d1": {
+      "services": [
+        { "binding": "AUTH", "service": "example-hono-d1" },
+        { "binding": "API", "service": "example-hono-api-d1" },
+      ],
+    },
+    "hyperdrive": {
+      "services": [
+        { "binding": "AUTH", "service": "example-hono-hyperdrive" },
+        { "binding": "API", "service": "example-hono-api-hyperdrive" },
+      ],
+    },
+  },
+}

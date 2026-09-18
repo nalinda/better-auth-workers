@@ -4,7 +4,7 @@
     "lib": ["ES2025"],
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "types": ["bun"],
+    "types": ["bun", "@cloudflare/workers-types"],
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
@@ -12,7 +12,11 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "paths": {
+      "better-auth-workers": ["./src/index.ts"],
+      "better-auth-workers/client": ["./src/client.ts"]
+    }
   },
   "include": ["src/**/*.ts", "examples/**/*.ts", "test/**/*.ts"]
 }

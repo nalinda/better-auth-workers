@@ -1,0 +1,97 @@
+name: Release
+
+# Configuring npm publishing (maintainers). Until NPM_TOKEN is set, this
+# workflow builds, tests and drafts the GitHub release but skips the publish
+# step with a visible notice. To enable automated publishing:
+#
+#   1. Create an automation access token on npmjs.com (or a granular access
+#      token scoped to the package with read and write permissions).
+#   2. Add it as a repository secret named NPM_TOKEN in GitHub
+#      (Settings → Secrets and variables → Actions → New repository secret).
+#   3. If the package has not yet been published to npm, run the initial
+#      publish manually once from an authenticated machine (`npm login`,
+#      then `npm publish --access public`). Subsequent releases are
+#      published automatically by this workflow.
+#   4. Provenance (`npm publish --provenance`) uses GitHub Actions OIDC via
+#      `permissions: id-token: write` below and needs no additional secrets.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    # `secrets` is not available in a step-level `if:`; the token is mapped
+    # to the job env so the publish steps can be gated on `env.NPM_TOKEN`.
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/bun-install
+
+      - name: Build
+        run: bun run build
+
+      - name: Test
+        run: bun run test
+
+      # A tag that does not match package.json would either fail publish
+      # obscurely (duplicate version) or ship the wrong version under it.
+      - name: Check the tag matches package.json
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(bun -e "console.log(require('./package.json').version)")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error title=Version mismatch::tag ${GITHUB_REF_NAME} is version ${TAG_VERSION}, but package.json is ${PKG_VERSION}"
+            exit 1
+          fi
+
+      - name: Generate release notes
+        id: release-notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { printing=1; print; next }
+            /^## \[/ { printing=0 }
+            printing { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "Release ${GITHUB_REF_NAME}" > RELEASE_NOTES.md
+          fi
+
+      # Not swallowed: a tag push whose draft fails (bad token, tag already
+      # released, network) must fail the job, not leave no release and no
+      # notice.
+      - name: Draft GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --draft \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file RELEASE_NOTES.md
+
+      - name: Notify npm publish skipped
+        if: ${{ env.NPM_TOKEN == '' }}
+        run: |
+          echo "::notice title=Publish skipped::Publishing was skipped pending NPM_TOKEN configuration."
+          echo "NPM_TOKEN is not configured. Skipping publish."
+
+      - name: Configure npm authentication
+        if: ${{ env.NPM_TOKEN != '' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+        run: echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+
+      - name: Publish to npm
+        if: ${{ env.NPM_TOKEN != '' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+        run: npm publish --provenance --access public
