@@ -206,11 +206,15 @@ describe('npm provenance prerequisites', () => {
 });
 
 describe('Changelog', () => {
-  it('CHANGELOG.md keeps the unreleased work under [Unreleased] until it is tagged', () => {
+  it('CHANGELOG.md keeps an [Unreleased] heading for work after the latest release', () => {
     const changelog = readChangelog();
     expect(changelog.length).toBeGreaterThan(0);
     expect(changelog).toContain('## [Unreleased]');
-    expect(changelog).not.toMatch(/^## \[0\.1\.0\]/m);
+  });
+
+  it('CHANGELOG.md records a dated heading for the latest released version', () => {
+    const changelog = readChangelog();
+    expect(changelog).toMatch(/^## \[\d+\.\d+\.\d+\] - \d{4}-\d{2}-\d{2}$/m);
   });
 });
 
