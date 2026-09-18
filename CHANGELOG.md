@@ -16,14 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Google OAuth sign-in plugin configured from Worker secrets or options.
 - Magic link sign-in plugin with delivery run under `waitUntil`.
 - Sign-in method restrictions using `allowedMethods` with 403 rejection.
-- Cross-Worker session client (`createSessionClient`) and Hono middleware (`requireSession`) with role checks.
+- Cross-Worker session client (`createSessionClient`) and Hono middleware (`requireSession`) with role checks; `requireSession` takes a required `{ client, predicate? }` argument (`client` is a `SessionClient` or a function of the request context), with no zero-argument form.
 - Bearer token plugin support for non-browser clients.
 - Typed `Env` / `AuthEnv` with startup validation of required bindings.
 - Shipped SQL migrations for PostgreSQL and SQLite.
 - Runnable Hono example Worker and consumer API under `examples/hono`.
 - Integration test suite for `wrangler dev` with D1 and Hyperdrive backends.
 - Release workflow with automated changelog extraction, release drafting, and provenance support.
-
-### Notes
-
-- `requireSession` takes a required `{ client, predicate? }` argument (`client` is a `SessionClient` or a function of the request context); there is no zero-argument form.
