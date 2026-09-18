@@ -30,8 +30,8 @@ export const OPTIONAL_METHOD_ROUTES: MethodRoutes[] = [
     method: 'phone',
     isConfigured: (options) => Boolean(options.phone),
     routes: [
-      { name: 'phoneNumberSendOtp', path: '/phone-number/send-otp', method: 'POST' },
-      { name: 'phoneNumberVerify', path: '/phone-number/verify', method: 'POST' },
+      { name: 'sendPhoneNumberOTP', path: '/phone-number/send-otp', method: 'POST' },
+      { name: 'verifyPhoneNumber', path: '/phone-number/verify', method: 'POST' },
       { name: 'signInPhoneNumber', path: '/sign-in/phone-number', method: 'POST' },
     ],
     pathPrefixes: ['/phone-number/'],

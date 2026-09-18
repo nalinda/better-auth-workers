@@ -193,7 +193,7 @@ describe('Phone OTP with user-supplied sendOTP under waitUntil', () => {
 
       expect(sendOTP).toHaveBeenCalledTimes(2);
       expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toMatch(/without an ExecutionContext/);
+      expect(warnings[0]).toMatch(/without a WaitUntilContext/);
       expect(warnings[0]).toMatch(/auth\.handler\(request, ctx\)/);
     });
 

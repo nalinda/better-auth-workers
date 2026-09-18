@@ -1,6 +1,6 @@
 import type { BetterAuthPlugin } from 'better-auth';
 
-import type { ConfigValue, ExecutionContext, KVStore } from '../types';
+import type { ConfigValue, KVStore, WaitUntilContext } from '../types';
 import type { PgPoolConstructor } from './postgres-pool';
 
 export interface CreateAuthPhoneOptions {
@@ -66,11 +66,11 @@ export interface CreateAuthOptions {
   secret?: string;
   database?: CreateAuthDatabaseOptions | D1Database;
   kv?: KVStore;
-  // The request's ExecutionContext. Only a fallback: pass the context to
+  // The request's WaitUntilContext. Only a fallback: pass the context to
   // `auth.handler(request, ctx)` on every request, since a memoised
   // instance would otherwise keep using the context of the request that
   // first built it.
-  ctx?: ExecutionContext;
+  ctx?: WaitUntilContext;
   phone?: CreateAuthPhoneOptions;
   magicLink?: CreateAuthMagicLinkOptions;
   google?: boolean | { clientId: string; clientSecret: string };

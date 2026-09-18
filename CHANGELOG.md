@@ -23,3 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Runnable Hono example Worker and consumer API under `examples/hono`.
 - Integration test suite for `wrangler dev` with D1 and Hyperdrive backends.
 - Release workflow with automated changelog extraction, release drafting, and provenance support.
+
+### Notes
+
+- `requireSession` takes a required `{ client, predicate? }` argument (`client` is a `SessionClient` or a function of the request context); there is no zero-argument form.

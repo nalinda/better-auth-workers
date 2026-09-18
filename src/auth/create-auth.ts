@@ -5,7 +5,7 @@ import type { admin, bearer, magicLink, phoneNumber } from 'better-auth/plugins'
 import { DEFAULT_BASE_PATH } from '../shared/base-path';
 import { BoundedMap } from '../shared/bounded-map';
 import { type ContextRef, withHandlerContext } from '../shared/non-blocking';
-import type { AuthEnv, ConfigValue, ExecutionContext } from '../types';
+import type { AuthEnv, ConfigValue, WaitUntilContext } from '../types';
 import { buildAllowedMethodsHook } from './allowed-methods';
 import { buildAdvancedConfig, buildRateLimitConfig, buildSessionConfig } from './config';
 import {
@@ -63,7 +63,7 @@ export type AuthInstance<O extends CreateAuthOptions = CreateAuthOptions> = Omit
   'handler' | 'options' | 'api'
 > & {
   api: ApiFor<O>;
-  handler: (request: Request, ctx?: ExecutionContext) => Promise<Response>;
+  handler: (request: Request, ctx?: WaitUntilContext) => Promise<Response>;
   options: BetterAuthOptions;
 };
 

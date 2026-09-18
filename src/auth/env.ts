@@ -1,3 +1,4 @@
+import { asString } from '../shared/as-string';
 import type { AuthEnv } from '../types';
 import type { CreateAuthOptions } from './types';
 
@@ -20,10 +21,6 @@ function resolveFromOptionsEnvOrEscapeHatch(
   // eslint-disable-next-line security/detect-object-injection -- field is a closed literal union
   const fromOptions = options?.[field];
   return fromOptions ?? asString(fromEnv) ?? asString(fromEscapeHatch);
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
 }
 
 export function resolveBaseURL(

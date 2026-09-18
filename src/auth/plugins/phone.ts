@@ -43,9 +43,6 @@ export function buildPhonePlugin(
     signUpOnVerification: SIGN_UP_ON_VERIFICATION,
     ...withoutUndefined(phoneOpts),
     sendOTP: (data, ctx) => {
-      if (!isValidE164(data.phoneNumber)) {
-        return;
-      }
       const req = ctx?.request;
       deliverNonBlocking(() => phoneOpts.sendOTP(data, req), req, ctxRef, [data.code]);
     },

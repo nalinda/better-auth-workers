@@ -1,19 +1,19 @@
-import type { ExecutionContext } from '../types';
+import type { WaitUntilContext } from '../types';
 import type { HandlerHost } from './handler-host';
 
-// The fallback ExecutionContext for an instance (`options.ctx`). It is a
+// The fallback WaitUntilContext for an instance (`options.ctx`). It is a
 // mutable holder rather than a captured value because the D1 path memoises
 // the instance: every later `createAuth` call refreshes `current`, so the
 // fallback tracks the latest request instead of the one that built the
 // instance. The context passed to `auth.handler(request, ctx)` always wins.
 export interface ContextRef {
-  current?: ExecutionContext;
+  current?: WaitUntilContext;
   // Set once the missing-context warning has been logged for this instance.
   hasWarnedMissingContext?: boolean;
 }
 
 const MISSING_CONTEXT_WARNING =
-  'better-auth-workers: delivery (sendOTP / sendMagicLink) was scheduled without an ExecutionContext. Pass the request context as auth.handler(request, ctx) — without it the Workers runtime may cancel delivery once the response is sent, while the response still reports success.';
+  'better-auth-workers: delivery (sendOTP / sendMagicLink) was scheduled without a WaitUntilContext. Pass the request context as auth.handler(request, ctx) — without it the Workers runtime may cancel delivery once the response is sent, while the response still reports success.';
 
 // A delivery with no context is a misconfiguration, not a quiet fallback:
 // the promise is detached and may be cancelled after the response. Logged
@@ -24,16 +24,16 @@ export function warnMissingContext(ctxRef: ContextRef): void {
   console.warn(MISSING_CONTEXT_WARNING);
 }
 
-const requestContextMap = new WeakMap<Request, ExecutionContext>();
+const requestContextMap = new WeakMap<Request, WaitUntilContext>();
 
-function setRequestContext(request: Request, ctx: ExecutionContext): void {
+function setRequestContext(request: Request, ctx: WaitUntilContext): void {
   requestContextMap.set(request, ctx);
 }
 
 export function getExecutionContext(
   request?: Request,
-  fallback?: ExecutionContext
-): ExecutionContext | undefined {
+  fallback?: WaitUntilContext
+): WaitUntilContext | undefined {
   if (request) {
     const ctx = requestContextMap.get(request);
     if (ctx) return ctx;
@@ -43,7 +43,7 @@ export function getExecutionContext(
 
 export function runNonBlocking(
   task: () => Promise<void> | void,
-  ctx?: ExecutionContext,
+  ctx?: WaitUntilContext,
   onError?: (error: Error | string | object) => void
 ): void {
   const promise = (async () => {
@@ -63,12 +63,12 @@ export function runNonBlocking(
   }
 }
 
-// Records the per-request ExecutionContext against the Request so plugin
+// Records the per-request WaitUntilContext against the Request so plugin
 // callbacks (sendOTP, sendMagicLink) can schedule work on the context of
 // the request they are serving.
 export function withHandlerContext(instance: HandlerHost, ctxRef: ContextRef): void {
   const originalHandler = instance.handler.bind(instance);
-  instance.handler = async (request: Request, ctx?: ExecutionContext) => {
+  instance.handler = async (request: Request, ctx?: WaitUntilContext) => {
     const activeCtx = ctx ?? ctxRef.current;
     if (activeCtx) {
       setRequestContext(request, activeCtx);

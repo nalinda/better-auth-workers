@@ -1,3 +1,4 @@
+import { asString } from '../shared/as-string';
 import type { JsonValue } from '../types';
 import type { CachedSessionEntry, SessionData, SessionRecord, SessionUser } from './types';
 
@@ -9,10 +10,6 @@ export function remainingTtlSeconds(expiresAt: string): number {
 
 function isObject(value: JsonValue | undefined): value is { [key: string]: JsonValue } {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function asString(field: JsonValue | undefined): string | undefined {
-  return typeof field === 'string' ? field : undefined;
 }
 
 function toSessionRecord(value: JsonValue | undefined): SessionRecord | null {

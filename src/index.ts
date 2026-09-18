@@ -8,4 +8,4 @@ export type {
   HyperdriveDatabaseOption,
   PgDriver,
 } from './auth/types';
-export type { AuthEnv, ConfigValue, ExecutionContext, KVStore } from './types';
+export type { AuthEnv, ConfigValue, KVStore, WaitUntilContext } from './types';

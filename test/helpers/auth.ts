@@ -1,6 +1,6 @@
 import { mock } from 'bun:test';
 
-import type { AuthEnv, ExecutionContext, KVStore } from '../../src/index';
+import type { AuthEnv, KVStore, WaitUntilContext } from '../../src/index';
 
 // Shared fixtures for the createAuth unit tests. Every test builds its env
 // as a real `AuthEnv` and passes real `CreateAuthOptions`, so a breaking
@@ -87,7 +87,7 @@ export function buildEnv(overrides: Partial<AuthEnv> = {}): AuthEnv {
 }
 
 export interface MockExecutionContext {
-  ctx: ExecutionContext;
+  ctx: WaitUntilContext;
   // The same function as `ctx.waitUntil`, exposed for call assertions.
   waitUntil: ReturnType<typeof mock<(promise: Promise<unknown>) => void>>;
   promises: Promise<unknown>[];

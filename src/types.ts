@@ -24,7 +24,12 @@ export interface AuthEnv {
   GOOGLE_CLIENT_SECRET?: string;
 }
 
-export interface ExecutionContext {
+// Named `WaitUntilContext`, not `ExecutionContext`, because consumers must
+// install `@cloudflare/workers-types` for this package's declarations to
+// resolve (see README "Installation"), and that package declares a global
+// `ExecutionContext` of its own — the same name here would silently shadow
+// it with this narrower shape wherever both are in scope.
+export interface WaitUntilContext {
   waitUntil(promise: Promise<void | Response>): void;
   passThroughOnException?(): void;
 }
