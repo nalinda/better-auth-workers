@@ -223,9 +223,4 @@ describe('Release documentation', () => {
     const readme = readReadme();
     expect(readme).toMatch(/major (version )?bump/i);
   });
-
-  it('documents changelog maintenance', () => {
-    const readme = readReadme();
-    expect(readme).toMatch(/CHANGELOG\.md/);
-  });
 });

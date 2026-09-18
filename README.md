@@ -25,7 +25,6 @@ It is a thin layer. Better Auth's options, plugins and clients are all still you
 - [Compatibility](#compatibility)
 - [FAQ](#faq)
 - [Contributing](#contributing)
-  - [Release process](#release-process)
 - [License](#license)
 
 ## Why this exists
@@ -154,11 +153,14 @@ await authClient.phoneNumber.verify({ phoneNumber: '+15555550123', code: '123456
 
 `createAuth(env, options)` returns a Better Auth instance. The D1 path memoises the instance per `env` (and per shape of `options`), so calling it on every request is free after the first call in an isolate. The Hyperdrive path builds a fresh instance per request for pool safety: each one wraps a fresh `pg` Pool that is released after its request (see [Storage](#storage)).
 
-**Callbacks on the memoised D1 path.** The cache key ignores functions, so the memoised instance keeps the callback options (`sendOTP`, `sendMagicLink`, `betterAuth.hooks`, `plugins`) of whichever request first built it, for the life of the isolate. Those callbacks must not close over per-request state (a request-scoped value, a per-request client); read what they need from `env`, from their own arguments, or from the request they are given. The `ExecutionContext` is the exception, handled for you as described next. The same goes for objects: a wrapped `kv` or any class instance under `betterAuth` (a custom `secondaryStorage`, say) is part of the cache key by identity, so constructing one inline on every request defeats memoisation (each call builds a new instance; the cache keeps only the most recent shapes). Build such objects once, or pass the raw bindings.
+**Callbacks on the memoised D1 path.** The cache key ignores functions, so the memoised instance keeps the callback options (`sendOTP`, `sendMagicLink`, `betterAuth.hooks`, `plugins`) of whichever request first built it, for the life of the isolate. Keep this in mind:
 
-Call `auth.handler(request, ctx)` with the request's `ExecutionContext` (Cloudflare's own `c.executionCtx` or `ctx` argument; the package exports its own narrower shape of it as `WaitUntilContext`, distinct from the global `ExecutionContext` that `@cloudflare/workers-types` declares) on every request. Work the package schedules through `waitUntil` (OTP and magic-link delivery, pool cleanup) runs on the context given to `handler`; `options.ctx` is only a fallback for callers that cannot pass one, and on a memoised instance it is refreshed on each `createAuth` call. If a delivery runs with no context at all, the package logs a warning (once per instance) — the runtime may cancel that delivery once the response is sent, so treat the warning as a misconfiguration to fix.
+- Callbacks must not close over per-request state (a request-scoped value, a per-request client). Read what they need from `env`, from their own arguments, or from the request they are given. `ExecutionContext` is the one exception — see below.
+- Objects are also part of the cache key, by identity: a wrapped `kv` or any class instance under `betterAuth` (a custom `secondaryStorage`, say). Constructing one inline on every request defeats memoisation, since each call then builds a new instance (the cache keeps only the most recent shapes). Build such objects once, or pass the raw bindings.
 
-`CreateAuthOptions` is a closed type: a misspelled key (`magicLinks:` for `magicLink:`) is a type error rather than a silently ignored option, at the top level and inside `betterAuth` too — `betterAuth` is typed against Better Auth's own options (`Partial<BetterAuthOptions>`), so `betterAuth: { rateLimt: { enabled: false } }` is a type error, not a silently ignored typo. The exception is the four fields this package builds and merges itself (`database`, `plugins`, `secondaryStorage`, `hooks`); those stay loosely typed under `betterAuth` since the package's own resolved values for them don't match Better Auth's stricter shapes.
+**Execution context.** Call `auth.handler(request, ctx)` with the request's `ExecutionContext` on every request — Cloudflare's own `c.executionCtx` or `ctx` argument. (The package exports its own narrower shape of this as `WaitUntilContext`, distinct from the global `ExecutionContext` that `@cloudflare/workers-types` declares.) Work the package schedules through `waitUntil` — OTP and magic-link delivery, pool cleanup — runs on the context given to `handler`. `options.ctx` is only a fallback for callers that cannot pass one, refreshed on each `createAuth` call for a memoised instance. If a delivery runs with no context at all, the package logs a warning once per instance; the runtime may cancel that delivery once the response is sent, so treat the warning as a misconfiguration to fix.
+
+**Typos are caught.** `CreateAuthOptions` is a closed type: a misspelled key (`magicLinks:` for `magicLink:`) is a type error, not a silently ignored option. This holds inside `betterAuth` too — it's typed against Better Auth's own options (`Partial<BetterAuthOptions>`), so `betterAuth: { rateLimt: { enabled: false } }` won't compile. The one exception is the four fields this package builds and merges itself (`database`, `plugins`, `secondaryStorage`, `hooks`); those stay loosely typed under `betterAuth`, since the package's own resolved values for them don't match Better Auth's stricter shapes.
 
 | Option           | Type                                                                                     | Default                  | Description                                                                                                                        |
 | ---------------- | ---------------------------------------------------------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
@@ -176,7 +178,9 @@ Call `auth.handler(request, ctx)` with the request's `ExecutionContext` (Cloudfl
 | `betterAuth`     | `Partial<BetterAuthOptions>` (loose for `database`/`plugins`/`secondaryStorage`/`hooks`) | `{}`                     | Escape hatch. Merged last, so it can override anything above.                                                                      |
 | `ctx`            | `WaitUntilContext`                                                                       | none                     | Fallback context for `waitUntil` work; `auth.handler(request, ctx)` takes precedence.                                              |
 
-**Package defaults under `betterAuth`.** Five Better Auth settings get a default from this package: `session.cookieCache.enabled: true`, `rateLimit.enabled: true` and `rateLimit.storage: 'secondary-storage'` (the limiter is on, in KV — Better Auth alone would leave it off in a deployed Worker), `advanced.database.validateSchema: false`, and `advanced.ipAddress.ipAddressHeaders: ['cf-connecting-ip', 'x-forwarded-for']` (so the limiter keys on Cloudflare's unspoofable client IP, falling back to the header the session client forwards). Whatever you set under `betterAuth.session`, `betterAuth.rateLimit` or `betterAuth.advanced` is shallow-merged over those defaults, field by field, so you state only what you change and can override the default itself (e.g. `betterAuth: { rateLimit: { storage: 'memory' } }`). Your `betterAuth.hooks` are composed with the package's own hooks (method restriction, cache invalidation), which run first in both slots. `betterAuth.socialProviders` merges the same way, per provider: `betterAuth: { socialProviders: { google: { scope: [...] } } }` adds to the `google` config this package resolved from `env` rather than replacing it, and `betterAuth: { socialProviders: { github: {...} } }` adds a provider the package didn't configure.
+**Package defaults under `betterAuth`.** This package sets five Better Auth settings for you: session cookie caching (`session.cookieCache.enabled: true`), the rate limiter turned on and pointed at KV (`rateLimit.enabled: true`, `rateLimit.storage: 'secondary-storage'` — left to itself, Better Auth would leave the limiter off in a deployed Worker), schema validation off (`advanced.database.validateSchema: false`), and client-IP resolution that prefers Cloudflare's unspoofable header (`advanced.ipAddress.ipAddressHeaders: ['cf-connecting-ip', 'x-forwarded-for']`).
+
+You don't lose the ability to override any of it. Whatever you set under `betterAuth.session`, `betterAuth.rateLimit` or `betterAuth.advanced` merges over these defaults field by field, so you only state what you want to change — for example `betterAuth: { rateLimit: { storage: 'memory' } }`. `betterAuth.socialProviders` merges the same way, per provider: `{ socialProviders: { google: { scope: [...] } } }` adds to the `google` config this package already resolved from `env`, rather than replacing it, and adding a provider it never configured (`github`, say) just works. `betterAuth.hooks` compose with the package's own hooks (method restriction, cache invalidation), which always run first.
 
 Everything not listed is Better Auth's default. Session lifetime, cookie attributes, OTP length and attempts are all Better Auth's defaults unless you change them through `phone` or `betterAuth`.
 
@@ -197,9 +201,7 @@ A `pg` Pool is created per request from `env.HYPERDRIVE.connectionString` with a
 
 Because the pool is per request, so is the instance: the Hyperdrive path is not memoised, and each instance serves exactly one `auth.handler` call. A second `handler` call on the same instance is refused with an error rather than running against the released pool — call `createAuth(env, options)` again for each request. The pool is only released by `handler`; a Worker that calls `auth.api.*` directly on a Hyperdrive instance owns the pool it created (`auth.options.database`) and must `end()` it itself.
 
-The Worker imports `pg` and passes it in because Workers are bundled: the bundler only includes modules it sees imported, so the package cannot load the driver on your behalf without forcing it on D1 deployments too.
-
-Hyperdrive keeps the real connections warm on Cloudflare's side, so per-request pools are cheap.
+The Worker imports `pg` and passes it in because Workers are bundled — the bundler only includes modules it sees imported, so the package can't load the driver on your behalf without forcing it on D1 deployments too. Hyperdrive keeps the real connections warm on Cloudflare's side, so these per-request pools stay cheap.
 
 ### D1
 
@@ -219,10 +221,14 @@ Use Postgres when your application data already lives there and you want foreign
 
 `kv` is required; `createAuth` refuses to start without `options.kv` or `env.AUTH_KV`, even when you supply your own store through `betterAuth.secondaryStorage`, because sign-out invalidation (below) deletes from that namespace. It is wired as Better Auth's secondary storage, which does two things:
 
-- **Session cache.** Session lookups hit KV before the database. With cookie caching enabled (Better Auth's default in this package) most requests never reach the primary store.
-- **Rate limiter storage.** Better Auth's rate limiter is turned on (Better Auth would only enable it when `NODE_ENV` is `production`, which a deployed Worker's `process.env` does not carry) and set to use secondary storage, so counters are shared across isolates instead of being per-isolate memory. `betterAuth.rateLimit` tunes or disables it. Counters are written to KV at most once per second per key (KV refuses faster writes) and kept in memory in between, so a burst from one client never fails a request. Each write merges: KV's current count plus the increments this isolate made since it last synced, so isolates that count the same client at the same time converge on the true shared total rather than overwriting each other; between syncs an isolate sees only its own increments on top of the last KV value, which is what makes the limit soft rather than exact. Sharing is best-effort: the counter is a KV read-then-write, not an atomic increment, and KV is eventually consistent, so concurrent requests across isolates or locations can undercount and let a burst briefly exceed the configured limit.
+- **Session cache.** Session lookups hit KV before the database. With cookie caching enabled — this package's default — most requests never reach the primary store.
+- **Rate limiter storage.** Better Auth's rate limiter is turned on and pointed at KV, so counters are shared across isolates instead of sitting in per-isolate memory. (Left to itself, Better Auth only enables the limiter when `NODE_ENV` is `production`, which a deployed Worker's `process.env` does not carry.) `betterAuth.rateLimit` tunes or disables it.
 
-**Consistency caveat.** KV is eventually consistent, typically within a minute across locations. Rate limits are therefore soft: a burst spread across regions can exceed the configured limit briefly. For most applications this is fine. If you need hard per-phone limits on OTP requests, put a Durable Object counter in front of `sendOTP`; the package does not do this for you. The same applies to one-shot values: consuming an OTP code or a magic-link token is a KV read followed by a delete, not an atomic take. An OTP is still bounded by its attempt counter, but a magic link has none, so two requests that open the same link at the same moment (or from different locations within KV's consistency window) can both succeed and each establish a session. A link is consumed by its first use in every ordinary case; if a strict single-use guarantee matters to you, verify it through a Durable Object instead.
+Sharing across isolates is best-effort, not exact. Counters are written to KV at most once per second per key — KV refuses faster writes — and kept in memory between writes, so a burst from one client never fails a request outright. Each write merges KV's current count with whatever this isolate counted since its last sync, so isolates counting the same client converge on the true total rather than overwriting each other. Because the counter is a KV read-then-write rather than an atomic increment, and KV is only eventually consistent, concurrent requests across isolates or regions can still undercount briefly and let a burst exceed the configured limit.
+
+For most applications that's fine. If you need a hard per-phone limit on OTP requests, put a Durable Object counter in front of `sendOTP` — the package doesn't do this for you.
+
+The same eventual-consistency applies to one-shot values: consuming an OTP code or a magic-link token is a KV read followed by a delete, not an atomic take. An OTP is still bounded by its attempt counter, but a magic link has none, so two requests opening the same link at nearly the same moment can both succeed and each establish a session. In practice a link is consumed on its first use; if you need a strict single-use guarantee, verify it through a Durable Object instead.
 
 ## Phone OTP
 
@@ -298,7 +304,9 @@ Some deployments should accept only some methods. An internal admin app might al
 allowedMethods: ['google'];
 ```
 
-installs a `before` hook that rejects requests to any of the package's other sign-in methods' routes with `403`. `allowedMethods` only knows about `phone`, `google` and `magic-link` — the three methods this package configures; a sign-in route you add yourself through `plugins` or `betterAuth` (a custom OAuth provider, `emailAndPassword`, and so on) is neither restricted nor listable here. The rejected routes are still mounted — by the method's own plugin when it is configured, or by a rejecting stub when it is not — so clients get a clear error rather than a `404`: a Google-only Worker that never configured `phone` still answers `/phone-number/send-otp` with `403`, while Google sign-in and `get-session` keep working. A method that is allowed but not configured is simply absent (`404`), since there is nothing to serve it.
+installs a `before` hook that rejects requests to any of the package's other sign-in methods' routes with `403`. It only knows about `phone`, `google` and `magic-link` — the three methods this package configures. A sign-in route you add yourself through `plugins` or `betterAuth` (a custom OAuth provider, `emailAndPassword`, and so on) is neither restricted nor listable here.
+
+The rejected routes stay mounted so clients get a clear `403` instead of a `404` — either by the method's own plugin when it's configured, or by a stub that just rejects when it isn't. A Google-only Worker that never configured `phone`, for example, still answers `/phone-number/send-otp` with `403`, while Google sign-in and `get-session` keep working. A method that's allowed but simply never configured is just absent — `404` — since there's nothing to serve it.
 
 ## Using sessions from another Worker
 
@@ -358,7 +366,7 @@ app.get('/me', requireSession<AppEnv>({ client: (c) => c.get('sessions') }), (c)
 
 If the auth Worker cannot be reached (service binding down, or it answers 5xx, 429, or any status other than 2xx/401/403 — a 404 from a wrong `basePath`, say) the middleware responds `503`, not `401`: an outage or a misconfiguration is not "not signed in", and clients should not clear their session over it. `createSessionClient().get` throws `SessionUnavailableError` in that case and returns `null` only for a real negative answer (`401`/`403`).
 
-`requireSession` also accepts a `predicate` for role checks, returning 403 when it fails. Note that the `user` the predicate sees is the cached copy: a point-in-time snapshot taken when the session was verified, refreshed only when the entry is evicted (sign-out and revocation, below) or expires with the session. A role change, email change or ban-less profile update on the auth Worker does not evict it, so a demoted user keeps passing a role predicate until then; if that matters, keep `session.expiresIn` short or re-check the user on the auth Worker for sensitive actions.
+`requireSession` also accepts a `predicate` for role checks, returning `403` when it fails. Keep in mind that the `user` it sees is the cached copy — a snapshot taken when the session was verified, refreshed only when the cache entry is evicted (sign-out and revocation, below) or expires with the session. A role change, email change, or a profile update that isn't a ban won't evict it, so a demoted user keeps passing a role predicate until then. If that matters for you, keep `session.expiresIn` short, or re-check the user on the auth Worker for sensitive actions.
 
 ```ts
 app.get(
@@ -377,7 +385,14 @@ How it works:
 2. The result is cached in KV keyed by the bare session token for the remaining session lifetime, with the credential exactly as presented (the signed cookie value, or the bearer token) recorded inside the entry; a read is served from the cache only when its credential matches one the entry recorded, so a cookie with a forged signature never hits an entry a genuine request warmed.
 3. Sign-out and session revocation in the auth Worker delete the KV entry, so the API sees the change on the next request.
 
-Step 3 covers these routes: `/sign-out`, `/revoke-session`, `/revoke-sessions`, `/revoke-other-sessions`, `/change-password` (which revokes other sessions when asked to), `/delete-user` (and its callback), and the admin plugin's `/admin/revoke-user-session`, `/admin/revoke-user-sessions`, `/admin/remove-user`, `/admin/ban-user`, `/admin/update-user` when it sets `banned: true`, and `/admin/stop-impersonating`. Routes that revoke every session of a user list that user's sessions before the revocation and clear each cache entry after it. Not covered: the password-reset routes (`/reset-password`, `/phone-number/reset-password` with `revokeSessionsOnPasswordReset`), which identify the user by a one-time token rather than a session, and sessions that simply expire; their cache entries expire with them.
+Step 3 covers:
+
+- `/sign-out`, `/revoke-session`, `/revoke-sessions`, `/revoke-other-sessions`
+- `/change-password` (when it revokes other sessions)
+- `/delete-user` and its callback
+- the admin plugin's `/admin/revoke-user-session`, `/admin/revoke-user-sessions`, `/admin/remove-user`, `/admin/ban-user`, `/admin/update-user` (when it sets `banned: true`), and `/admin/stop-impersonating`
+
+A route that revokes every session of a user lists that user's sessions before the revocation and clears each cache entry afterward. Not covered: the password-reset routes (`/reset-password`, `/phone-number/reset-password` with `revokeSessionsOnPasswordReset`), since they identify the user by a one-time token rather than a session — and sessions that simply expire, whose cache entries just expire along with them.
 
 Sharing the KV namespace between the two Workers is what makes step 3 work. Using separate namespaces still functions, but revocation is only visible after the cache entry expires.
 
@@ -465,10 +480,10 @@ That package integrates Better Auth with Cloudflare through Drizzle and adds geo
 Because bindings arrive on `env`, which only exists inside the handler. On D1 the instance is memoised per `env` object, so within an isolate the cost is paid once. On Hyperdrive it is rebuilt per request on purpose, since the `pg` Pool it wraps is per request too.
 
 **Can I use Better Auth features this package does not mention?**
-Yes. `plugins` and `betterAuth` pass straight through. The package does not hide or rename anything in Better Auth. `auth.api` is typed with the endpoints of the plugins the package builds (admin always; phone number and magic link when their option is set). The instance type follows the options you pass: an endpoint of a method your options do not configure is typed as possibly undefined, since its plugin is not registered and the endpoint is absent at runtime, as it would be on Better Auth's own instance.
+Yes — `plugins` and `betterAuth` pass straight through, and the package doesn't hide or rename anything in Better Auth. `auth.api` is typed with the endpoints of the plugins the package builds: admin always, phone number and magic link when you set their option. If your options don't configure a method, calling its endpoint is a type error rather than a runtime surprise — its plugin isn't registered, so the endpoint really is absent, just as it would be on Better Auth's own instance.
 
 **Does it manage users, roles or organisations?**
-Only through Better Auth's own plugins. The admin plugin is always enabled, with no option to turn it off, so role checks and the `/admin/*` routes are available without extra configuration — and so the shipped migrations always include its columns (`role`, `banned`, `banReason`, `banExpires`, `impersonatedBy`) and the session-invalidation hooks can rely on its routes for admin-triggered revocation (see [Using sessions from another Worker](#using-sessions-from-another-worker)). Organisations, passkeys, multi-session and MFA are Better Auth plugins you can add through `plugins`.
+Only through Better Auth's own plugins. The admin plugin is always on, with no way to turn it off — that's why the shipped migrations include its columns (`role`, `banned`, `banReason`, `banExpires`, `impersonatedBy`), and why the session-invalidation hooks can rely on its routes for admin-triggered revocation (see [Using sessions from another Worker](#using-sessions-from-another-worker)). Organisations, passkeys, multi-session and MFA are Better Auth plugins you can add yourself through `plugins`.
 
 **Is the rate limiter safe for OTP?**
 It is shared across isolates through KV, which is what most applications need. It is not a hard limit because KV is eventually consistent. See [Sessions and rate limiting on KV](#sessions-and-rate-limiting-on-kv).
@@ -482,31 +497,6 @@ bun install
 bun test
 bun run --cwd examples/hono dev
 ```
-
-### Integration tests
-
-`bun test` runs the unit suite. The integration suite starts the example Worker under `wrangler dev` (with the API Worker and a small gateway) and drives it over HTTP; it only runs for the backends you ask for, and says so when none is requested:
-
-```sh
-INTEGRATION_BACKENDS=d1 bun run test:integration             # D1: wrangler's local SQLite, no other setup
-INTEGRATION_BACKENDS=d1,hyperdrive bun run test:integration  # also Postgres through Hyperdrive
-```
-
-The Hyperdrive backend needs a Postgres. By default the suite starts a throwaway `postgres:17-alpine` container with Docker and removes it afterwards; to use a Postgres you already have, set `INTEGRATION_POSTGRES_URL` to an admin connection string (the suite creates and drops its own database on it):
-
-```sh
-INTEGRATION_BACKENDS=hyperdrive INTEGRATION_POSTGRES_URL=postgresql://postgres:postgres@localhost:5432/postgres bun run test:integration
-```
-
-CI runs both backends this way (`.github/workflows/ci.yml`, with a Postgres service container).
-
-### Release process
-
-- **Versioning**: Follows [Semantic Versioning](https://semver.org/). As noted in [Migrations](#migrations), schema changes in this package are always a major version bump.
-- **Changelog**: Maintained per release in [CHANGELOG.md](CHANGELOG.md) following [Keep a Changelog](https://keepachangelog.com/). Each release documents notable changes under Added, Changed, Deprecated, Removed, Fixed, or Security.
-- **Cutting a release**: Bump `package.json#version`, rename the `## [Unreleased]` heading in `CHANGELOG.md` to `## [x.y.z] - YYYY-MM-DD` for that version, and commit both. Then tag that commit `vx.y.z` and push the tag. The workflow fails if the tag and `package.json#version` disagree, and it extracts the release notes by matching the `## [x.y.z]` heading — without it the GitHub release is drafted with no notes.
-- **Release workflow**: Releases are triggered by pushing a version tag (`v*`, e.g. `v0.1.0`). The `.github/workflows/release.yml` workflow builds the package, runs the test suite, extracts release notes from `CHANGELOG.md`, and drafts a GitHub release.
-- **npm publishing**: Publishing to npm is currently pending `NPM_TOKEN` configuration. When a version tag is pushed without `NPM_TOKEN` configured, the workflow builds, tests, and drafts the release, but skips the publish step with a visible notice.
 
 ## License
 
