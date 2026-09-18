@@ -34,9 +34,10 @@ app.on(['GET', 'POST'], '/auth/*', (c) => {
     allowedMethods: hasGoogle ? ['phone', 'magic-link', 'google'] : ['phone', 'magic-link'],
   });
 
-  // The request's ExecutionContext goes with every call: the instance is
-  // memoised, so delivery scheduled through waitUntil (OTP, magic link)
-  // must run on this request's context, not the one that built it.
+  // The request's ExecutionContext goes with every call: the instance may
+  // be memoised (D1 only; Hyperdrive rebuilds it per request), so delivery
+  // scheduled through waitUntil (OTP, magic link) must run on this
+  // request's context, not the one that built it.
   return auth.handler(c.req.raw, c.executionCtx);
 });
 

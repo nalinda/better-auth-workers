@@ -3,6 +3,9 @@ import type { CreateAuthOptions } from './types';
 
 // Both resolvable values follow the same three-way fallback: the top-level
 // option, then the env binding, then the `betterAuth` escape hatch.
+// This ranking is for validation (is a value present at all?) only: in
+// buildAuthConfig the `betterAuth` escape hatch is spread last, so at
+// runtime a `betterAuth.baseURL` / `.secret` wins over the other two.
 function resolveFromOptionsEnvOrEscapeHatch(
   field: 'baseURL' | 'secret',
   envKey: 'AUTH_BASE_URL' | 'BETTER_AUTH_SECRET',

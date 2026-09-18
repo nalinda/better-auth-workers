@@ -28,7 +28,10 @@ const WRITE_INTERVAL_MS = 1000;
 const MAX_SHADOWED_KEYS = 1000;
 
 interface ShadowCounter extends RateLimitCounter {
-  lastWriteAt: number;
+  // When this isolate last attempted a write, successful or not: a refused
+  // write must not re-arm the interval, or every increment under the
+  // contention the coalescing exists for would read and retry again.
+  lastAttemptAt: number;
   // Increments made here since this isolate last synced with KV.
   pending: number;
 }
@@ -47,7 +50,8 @@ function createCounters(kv: KVStore) {
   // since its last sync, so concurrently active isolates converge on the
   // true shared total instead of the last writer's own count winning.
   async function writeThrough(key: string, entry: ShadowCounter, now: number, isSynced: boolean) {
-    if (now - entry.lastWriteAt < WRITE_INTERVAL_MS) return;
+    if (now - entry.lastAttemptAt < WRITE_INTERVAL_MS) return;
+    entry.lastAttemptAt = now;
     if (!isSynced) {
       const stored = await readStored(key, now);
       if (stored) {
@@ -56,15 +60,14 @@ function createCounters(kv: KVStore) {
       }
     }
     try {
-      // Only the shared contract is persisted; `lastWriteAt` and `pending`
+      // Only the shared contract is persisted; `lastAttemptAt` and `pending`
       // are this isolate's bookkeeping and mean nothing to another reader.
       const stored: RateLimitCounter = { count: entry.count, expiresAt: entry.expiresAt };
       await kv.put(key, JSON.stringify(stored), kvExpiry((entry.expiresAt - now) / 1000));
-      entry.lastWriteAt = now;
       entry.pending = 0;
     } catch {
       // Refused (rate-limited) or failed: the shadow keeps counting and
-      // the next increment past the interval merges and writes again.
+      // the first increment past the interval merges and writes again.
     }
   }
 
@@ -75,8 +78,8 @@ function createCounters(kv: KVStore) {
     if (!entry || entry.expiresAt <= now) {
       const stored = await readStored(key, now);
       entry = stored
-        ? { ...stored, lastWriteAt: 0, pending: 0 }
-        : { count: 0, expiresAt: now + Math.max(ttl, 1) * 1000, lastWriteAt: 0, pending: 0 };
+        ? { ...stored, lastAttemptAt: 0, pending: 0 }
+        : { count: 0, expiresAt: now + Math.max(ttl, 1) * 1000, lastAttemptAt: 0, pending: 0 };
       // Freshly read: the entry already reflects KV, no second read needed.
       isSynced = true;
     }

@@ -278,6 +278,34 @@ describe('KV secondary storage for session cache and rate limiter', () => {
       expect(kv.refused.length).toBeGreaterThan(0);
     });
 
+    it('attempts at most one write per interval while KV keeps refusing, not one per increment', async () => {
+      const kv = new ThrottledKV();
+      const storage = secondaryStorageOf(createAuth(buildEnv(), { kv }));
+      const start = new Date('2026-09-17T12:00:00Z');
+      setSystemTime(start);
+      // Force refusals: a write for this key just happened elsewhere.
+      await kv.put('rate:hot', 'x');
+      kv.puts.length = 0;
+      kv.gets.length = 0;
+
+      for (let i = 1; i <= 6; i += 1) {
+        setSystemTime(new Date(start.getTime() + i * 100));
+        expect(await storage.increment('rate:hot', 60)).toBe(i);
+      }
+
+      // Six increments within one second: one refused attempt (and one
+      // merge read), not one per increment.
+      expect(kv.refused).toHaveLength(1);
+      expect(kv.puts).toHaveLength(0);
+      expect(kv.gets.filter((key) => key === 'rate:hot')).toHaveLength(1);
+
+      // Past the interval the next increment merges and writes again.
+      setSystemTime(new Date(start.getTime() + 1200));
+      expect(await storage.increment('rate:hot', 60)).toBe(7);
+      expect(kv.puts.filter((put) => put.key === 'rate:hot')).toHaveLength(1);
+      setSystemTime();
+    });
+
     it('serves two same-client requests within a second without a 5xx', async () => {
       const kv = new ThrottledKV();
       const auth = createAuth(buildEnv(), {
