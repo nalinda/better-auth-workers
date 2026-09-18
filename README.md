@@ -56,7 +56,10 @@ This package does those four things and stops.
 
 ```sh
 npm install better-auth better-auth-workers
+npm install -D @cloudflare/workers-types
 ```
+
+The package's type declarations reference the Workers runtime globals (`KVNamespace`, `D1Database`, `Hyperdrive`) through `@cloudflare/workers-types`, so it has to be installed for them to resolve, even in a project that generates its own binding types with `wrangler types`.
 
 Postgres deployments also need the driver:
 
@@ -441,15 +444,16 @@ The `examples/hono` directory contains a runnable auth Worker with both storage 
 
 ## Compatibility
 
-| Dependency             | Version         |
-| ---------------------- | --------------- |
-| better-auth            | ^1.7            |
-| wrangler               | ^4              |
-| Compatibility flags    | `nodejs_compat` |
-| pg (Postgres only)     | ^8              |
-| hono (middleware only) | ^4              |
+| Dependency                | Version         |
+| ------------------------- | --------------- |
+| better-auth               | ^1.7            |
+| wrangler                  | ^4              |
+| Compatibility flags       | `nodejs_compat` |
+| @cloudflare/workers-types | >=4             |
+| pg (Postgres only)        | ^8              |
+| hono (middleware only)    | ^4              |
 
-Hono is an optional peer dependency. `createAuth` and `createSessionClient` work with any framework that gives you a `Request`; only `requireSession()` needs Hono.
+`@cloudflare/workers-types` is a peer dependency the package's declarations depend on: install it explicitly (see [Installation](#installation)), since `wrangler types` alone does not provide the globals they reference. Hono is an optional peer dependency. `createAuth` and `createSessionClient` work with any framework that gives you a `Request`; only `requireSession()` needs Hono.
 
 ## FAQ
 
@@ -499,6 +503,7 @@ CI runs both backends this way (`.github/workflows/ci.yml`, with a Postgres serv
 
 - **Versioning**: Follows [Semantic Versioning](https://semver.org/). As noted in [Migrations](#migrations), schema changes in this package are always a major version bump.
 - **Changelog**: Maintained per release in [CHANGELOG.md](CHANGELOG.md) following [Keep a Changelog](https://keepachangelog.com/). Each release documents notable changes under Added, Changed, Deprecated, Removed, Fixed, or Security.
+- **Cutting a release**: Bump `package.json#version`, rename the `## [Unreleased]` heading in `CHANGELOG.md` to `## [x.y.z] - YYYY-MM-DD` for that version, and commit both. Then tag that commit `vx.y.z` and push the tag. The workflow fails if the tag and `package.json#version` disagree, and it extracts the release notes by matching the `## [x.y.z]` heading — without it the GitHub release is drafted with no notes.
 - **Release workflow**: Releases are triggered by pushing a version tag (`v*`, e.g. `v0.1.0`). The `.github/workflows/release.yml` workflow builds the package, runs the test suite, extracts release notes from `CHANGELOG.md`, and drafts a GitHub release.
 - **npm publishing**: Publishing to npm is currently pending `NPM_TOKEN` configuration. When a version tag is pushed without `NPM_TOKEN` configured, the workflow builds, tests, and drafts the release, but skips the publish step with a visible notice.
 

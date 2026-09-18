@@ -133,6 +133,23 @@ describe('KV secondary storage for session cache and rate limiter', () => {
       expect(await statusAt(101)).toBe(200);
     });
 
+    it('persists only the shared `{ count, expiresAt }` shape, not the isolate-local bookkeeping', async () => {
+      const mockKv = new FakeKV();
+      const storage = secondaryStorageOf(createAuth(buildEnv(), { kv: mockKv }));
+      const start = new Date('2026-09-17T12:00:00Z');
+
+      setSystemTime(start);
+      await storage.increment('rate:key', 100);
+      setSystemTime(new Date(start.getTime() + 1500));
+      await storage.increment('rate:key', 100);
+
+      const persisted: unknown[] = mockKv.puts.map((put) => JSON.parse(put.value) as unknown);
+      expect(persisted).toEqual([
+        { count: 1, expiresAt: start.getTime() + 100_000 },
+        { count: 2, expiresAt: start.getTime() + 100_000 },
+      ]);
+    });
+
     it('treats a counter left by an older release (a bare number) as a fresh window', async () => {
       const mockKv = new FakeKV();
       mockKv.store.set('rate:legacy', '7');

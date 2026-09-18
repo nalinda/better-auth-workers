@@ -56,7 +56,10 @@ function createCounters(kv: KVStore) {
       }
     }
     try {
-      await kv.put(key, JSON.stringify(entry), kvExpiry((entry.expiresAt - now) / 1000));
+      // Only the shared contract is persisted; `lastWriteAt` and `pending`
+      // are this isolate's bookkeeping and mean nothing to another reader.
+      const stored: RateLimitCounter = { count: entry.count, expiresAt: entry.expiresAt };
+      await kv.put(key, JSON.stringify(stored), kvExpiry((entry.expiresAt - now) / 1000));
       entry.lastWriteAt = now;
       entry.pending = 0;
     } catch {
