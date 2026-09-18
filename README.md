@@ -145,8 +145,8 @@ export const authClient = createAuthClient({
   plugins: [phoneNumberClient()],
 });
 
-await authClient.phoneNumber.sendOtp({ phoneNumber: '+94771234567' });
-await authClient.phoneNumber.verify({ phoneNumber: '+94771234567', code: '123456' });
+await authClient.phoneNumber.sendOtp({ phoneNumber: '+15555550123' });
+await authClient.phoneNumber.verify({ phoneNumber: '+15555550123', code: '123456' });
 ```
 
 ## Configuration
@@ -506,15 +506,6 @@ CI runs both backends this way (`.github/workflows/ci.yml`, with a Postgres serv
 - **Cutting a release**: Bump `package.json#version`, rename the `## [Unreleased]` heading in `CHANGELOG.md` to `## [x.y.z] - YYYY-MM-DD` for that version, and commit both. Then tag that commit `vx.y.z` and push the tag. The workflow fails if the tag and `package.json#version` disagree, and it extracts the release notes by matching the `## [x.y.z]` heading — without it the GitHub release is drafted with no notes.
 - **Release workflow**: Releases are triggered by pushing a version tag (`v*`, e.g. `v0.1.0`). The `.github/workflows/release.yml` workflow builds the package, runs the test suite, extracts release notes from `CHANGELOG.md`, and drafts a GitHub release.
 - **npm publishing**: Publishing to npm is currently pending `NPM_TOKEN` configuration. When a version tag is pushed without `NPM_TOKEN` configured, the workflow builds, tests, and drafts the release, but skips the publish step with a visible notice.
-
-#### Configuring npm publishing
-
-When ready to enable automated npm publishing:
-
-1. Create an automation access token on [npmjs.com](https://www.npmjs.com/) (or a granular access token scoped to the package with read and write permissions).
-2. Add it as a repository secret named `NPM_TOKEN` in GitHub (**Settings** → **Secrets and variables** → **Actions** → **New repository secret**).
-3. If the package has not yet been published to npm, run the initial publish manually once from an authenticated machine (`npm login`, then `npm publish --access public`). Subsequent releases are published automatically by CI.
-4. Provenance (`npm publish --provenance`) uses GitHub Actions OIDC via `permissions: id-token: write` and requires no additional secrets.
 
 ## License
 
