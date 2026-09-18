@@ -355,7 +355,7 @@ app.get('/me', requireSession<AppEnv>({ client: (c) => c.get('sessions') }), (c)
 );
 ```
 
-If the auth Worker cannot be reached (service binding down, or it answers 5xx) the middleware responds `503`, not `401`: an outage is not "not signed in", and clients should not clear their session over it. `createSessionClient().get` throws `SessionUnavailableError` in that case and returns `null` only for a real negative answer.
+If the auth Worker cannot be reached (service binding down, or it answers 5xx, 429, or any status other than 2xx/401/403 — a 404 from a wrong `basePath`, say) the middleware responds `503`, not `401`: an outage or a misconfiguration is not "not signed in", and clients should not clear their session over it. `createSessionClient().get` throws `SessionUnavailableError` in that case and returns `null` only for a real negative answer (`401`/`403`).
 
 `requireSession` also accepts a `predicate` for role checks, returning 403 when it fails. Note that the `user` the predicate sees is the cached copy: a point-in-time snapshot taken when the session was verified, refreshed only when the entry is evicted (sign-out and revocation, below) or expires with the session. A role change, email change or ban-less profile update on the auth Worker does not evict it, so a demoted user keeps passing a role predicate until then; if that matters, keep `session.expiresIn` short or re-check the user on the auth Worker for sensitive actions.
 
@@ -373,7 +373,7 @@ app.get(
 How it works:
 
 1. The client forwards the incoming request's `Cookie` (or `Authorization`) header to the auth Worker's `get-session` route over the service binding.
-2. The result is cached in KV under the credential exactly as presented (the signed cookie value, or the bearer token) for the remaining session lifetime, so a cookie with a forged signature never hits an entry a genuine request warmed.
+2. The result is cached in KV keyed by the bare session token for the remaining session lifetime, with the credential exactly as presented (the signed cookie value, or the bearer token) recorded inside the entry; a read is served from the cache only when its credential matches one the entry recorded, so a cookie with a forged signature never hits an entry a genuine request warmed.
 3. Sign-out and session revocation in the auth Worker delete the KV entry, so the API sees the change on the next request.
 
 Step 3 covers these routes: `/sign-out`, `/revoke-session`, `/revoke-sessions`, `/revoke-other-sessions`, `/change-password` (which revokes other sessions when asked to), `/delete-user` (and its callback), and the admin plugin's `/admin/revoke-user-session`, `/admin/revoke-user-sessions`, `/admin/remove-user`, `/admin/ban-user`, `/admin/update-user` when it sets `banned: true`, and `/admin/stop-impersonating`. Routes that revoke every session of a user list that user's sessions before the revocation and clear each cache entry after it. Not covered: the password-reset routes (`/reset-password`, `/phone-number/reset-password` with `revokeSessionsOnPasswordReset`), which identify the user by a one-time token rather than a session, and sessions that simply expire; their cache entries expire with them.
@@ -464,7 +464,7 @@ That package integrates Better Auth with Cloudflare through Drizzle and adds geo
 Because bindings arrive on `env`, which only exists inside the handler. On D1 the instance is memoised per `env` object, so within an isolate the cost is paid once. On Hyperdrive it is rebuilt per request on purpose, since the `pg` Pool it wraps is per request too.
 
 **Can I use Better Auth features this package does not mention?**
-Yes. `plugins` and `betterAuth` pass straight through. The package does not hide or rename anything in Better Auth. `auth.api` is typed with the endpoints of the plugins the package builds (admin, phone number, magic link, bearer); calling an endpoint of a method you did not configure fails at runtime, as it would on Better Auth's own instance.
+Yes. `plugins` and `betterAuth` pass straight through. The package does not hide or rename anything in Better Auth. `auth.api` is typed with the endpoints of the plugins the package builds (admin always; phone number and magic link when their option is set). The instance type follows the options you pass: an endpoint of a method your options do not configure is typed as possibly undefined, since its plugin is not registered and the endpoint is absent at runtime, as it would be on Better Auth's own instance.
 
 **Does it manage users, roles or organisations?**
 Only through Better Auth's own plugins. The admin plugin is enabled for role checks; organisations, passkeys, multi-session and MFA are Better Auth plugins you can add through `plugins`.

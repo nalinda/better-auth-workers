@@ -1,6 +1,11 @@
 import { describe, expect, it, mock } from 'bun:test';
 
-import { type AuthEnv, type AuthInstance, createAuth } from '../../src/index';
+import {
+  type AuthEnv,
+  type AuthInstance,
+  createAuth,
+  type CreateAuthOptions,
+} from '../../src/index';
 import { sessionCacheKey } from '../../src/shared/session-cache';
 import {
   buildEnv,
@@ -427,6 +432,26 @@ describe('auth.api is typed with the package’s plugin endpoints', () => {
       auth.api.getSession,
     ];
     for (const endpoint of endpoints) expect(typeof endpoint).toBe('function');
+  });
+
+  it('types the endpoints of a method the options do not configure as possibly undefined, matching the runtime', () => {
+    const auth = createAuth(buildEnv(), { magicLink: { sendMagicLink: () => {} } });
+
+    // @ts-expect-error -- phone is not configured, so its endpoint may be undefined
+    const readPhonePath = (): string => auth.api.sendPhoneNumberOTP.path;
+    expect(readPhonePath).toThrow(TypeError);
+    expect(auth.api.sendPhoneNumberOTP).toBeUndefined();
+    // A configured method's endpoint stays required, as does admin's.
+    const magicLinkPath: string = auth.api.signInMagicLink.path;
+    expect(magicLinkPath).toBe('/sign-in/magic-link');
+    expect(typeof auth.api.listUsers).toBe('function');
+
+    // Loosely typed options: every optional endpoint is possibly undefined.
+    const loose: CreateAuthOptions = { phone: { sendOTP: () => {} } };
+    const fromLoose = createAuth(buildEnv(), loose);
+    // @ts-expect-error -- the options type does not say phone is set
+    const loosePath: string = fromLoose.api.sendPhoneNumberOTP.path;
+    expect(loosePath).toBe('/phone-number/send-otp');
   });
 });
 

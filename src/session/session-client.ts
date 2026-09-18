@@ -72,11 +72,15 @@ function credentialFrom(request: Request, cookieName: string): Credential | unde
   return bearer ? { value: bearer, source: 'bearer' } : undefined;
 }
 
-// A 5xx is the auth Worker failing to answer, and so is a 429 (its rate
-// limiter throttled this miss); any other non-2xx (a 401 for a rejected
-// credential, say) is a negative answer.
-function isNoAnswer(status: number): boolean {
-  return status >= 500 || status === 429;
+// Only a 401 or 403 is a genuine negative answer (a rejected credential, or
+// a caller Better Auth refuses). A 5xx is the auth Worker failing to
+// answer, and so is a 429 (its rate limiter throttled this miss) — and so
+// is any other non-2xx: a 404 from a wrong `basePath`, a 400 from a
+// malformed forwarded request, an origin rejection. Treating those as
+// "not signed in" would turn a misconfiguration into a permanent 401 for
+// every caller with nothing to flag it.
+function isNegativeAnswer(status: number): boolean {
+  return status === 401 || status === 403;
 }
 
 // A cache miss is answered by the auth Worker's store, never by Better
@@ -116,13 +120,13 @@ async function fetchSession(
       `auth Worker unreachable: ${error instanceof Error ? error.message : String(error)}`
     );
   }
-  if (isNoAnswer(response.status)) {
+  if (isNegativeAnswer(response.status)) return null;
+  if (!response.ok) {
     throw new SessionUnavailableError(
       `auth Worker answered ${String(response.status)}`,
       response.status
     );
   }
-  if (!response.ok) return null;
   try {
     const payload: JsonValue = await response.json();
     return toSessionData(payload);

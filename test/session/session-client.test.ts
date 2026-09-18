@@ -440,13 +440,24 @@ describe('createSessionClient verifies sessions over a service binding with a KV
       expect((thrown as SessionUnavailableError).status).toBe(429);
     });
 
-    it('still returns null for a 4xx, which is a negative answer', async () => {
-      const binding = {
-        fetch: () => Promise.resolve(new Response('Unauthorized', { status: 401 })),
-      };
-      const client = buildSessionClient({ auth: binding, kv: new FakeKV(), basePath: BASE_PATH });
+    it('returns null for a 401 or 403, the genuine negative answers', async () => {
+      for (const status of [401, 403]) {
+        const binding = { fetch: () => Promise.resolve(new Response('no', { status })) };
+        const client = buildSessionClient({ auth: binding, kv: new FakeKV(), basePath: BASE_PATH });
 
-      expect(await client.get(makeSessionRequest())).toBeNull();
+        expect(await client.get(makeSessionRequest())).toBeNull();
+      }
+    });
+
+    it('throws SessionUnavailableError on any other non-2xx (a 404 from a wrong basePath, a 400), so a misconfiguration is loud rather than "not signed in"', async () => {
+      for (const status of [400, 404, 405]) {
+        const binding = { fetch: () => Promise.resolve(new Response('no', { status })) };
+        const client = buildSessionClient({ auth: binding, kv: new FakeKV(), basePath: BASE_PATH });
+
+        const thrown = await caught(client);
+        expect(thrown).toBeInstanceOf(SessionUnavailableError);
+        expect((thrown as SessionUnavailableError).status).toBe(status);
+      }
     });
   });
 

@@ -320,7 +320,7 @@ describe.each(backends)('example Worker under wrangler dev (%s)', (backend: Back
     expect(signedOut.status).toBe(200);
 
     const afterSignOut = await fetch(`${server.baseUrl}/me`, {
-      headers: { cookie: cookie as string },
+      headers: asClient({ cookie: cookie as string }),
     });
     expect(afterSignOut.status).toBe(401);
   });

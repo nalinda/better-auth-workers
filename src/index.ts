@@ -1,6 +1,5 @@
 export type { AuthInstance } from './auth/create-auth';
 export { createAuth } from './auth/create-auth';
-export type { ResolvedDatabase } from './auth/database';
 export type {
   CreateAuthDatabaseOptions,
   CreateAuthMagicLinkOptions,

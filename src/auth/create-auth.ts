@@ -23,11 +23,8 @@ import type { CreateAuthHook, CreateAuthHooks, CreateAuthOptions } from './types
 import { validateConfig } from './validate';
 
 // The instance type is Better Auth's for the plugins this package builds,
-// so `auth.api` is typed with their endpoints (admin always; phone,
-// magic-link and bearer when configured — an endpoint of a method you did
-// not configure throws at runtime, as Better Auth's own instance would).
-// `admin` is a generic factory; its endpoints only resolve when it is
-// instantiated explicitly.
+// so `auth.api` is typed with their endpoints. `admin` is a generic
+// factory; its endpoints only resolve when it is instantiated explicitly.
 interface PackagePluginOptions {
   plugins: [
     ReturnType<typeof admin<Record<never, never>>>,
@@ -38,11 +35,34 @@ interface PackagePluginOptions {
 }
 
 type BetterAuthInstance = ReturnType<typeof betterAuth<PackagePluginOptions>>;
+type FullApi = BetterAuthInstance['api'];
+
+// The phone and magic-link plugins are only registered when their option
+// is set (see plugins/index.ts), so their endpoints exist on `auth.api`
+// only then. The instance type follows the options type it was built from:
+// an endpoint whose method the options do not configure is typed as
+// possibly undefined, so calling it is a compile error rather than an "is
+// not a function" at runtime. Options typed loosely (a plain
+// `CreateAuthOptions`) get every optional endpoint as possibly undefined.
+// The bearer plugin contributes no endpoints, only hooks.
+type PhoneEndpointName = keyof ReturnType<typeof phoneNumber>['endpoints'];
+type MagicLinkEndpointName = keyof ReturnType<typeof magicLink>['endpoints'];
+
+type AbsentEndpointName<O extends CreateAuthOptions> =
+  | (O extends { phone: object } ? never : PhoneEndpointName)
+  | (O extends { magicLink: object } ? never : MagicLinkEndpointName);
+
+type ApiFor<O extends CreateAuthOptions> = Omit<FullApi, AbsentEndpointName<O>> &
+  Partial<Pick<FullApi, AbsentEndpointName<O>>>;
 
 // `options` is the full Better Auth options type, since the configured
 // instance is built from whatever the consumer passed, not the fixed plugin
 // list the type above is derived from.
-export type AuthInstance = Omit<BetterAuthInstance, 'handler' | 'options'> & {
+export type AuthInstance<O extends CreateAuthOptions = CreateAuthOptions> = Omit<
+  BetterAuthInstance,
+  'handler' | 'options' | 'api'
+> & {
+  api: ApiFor<O>;
   handler: (request: Request, ctx?: ExecutionContext) => Promise<Response>;
   options: BetterAuthOptions;
 };
@@ -197,7 +217,10 @@ function buildAuthConfig(
   };
 }
 
-export function createAuth(env: AuthEnv, options?: CreateAuthOptions): AuthInstance {
+export function createAuth<O extends CreateAuthOptions = CreateAuthOptions>(
+  env: AuthEnv,
+  options?: O
+): AuthInstance<O> {
   const isHyperdrive = Boolean(resolveHyperdriveConnectionString(options, env));
   const optionsKey = isHyperdrive ? undefined : getOptionsKey(options);
 
@@ -208,7 +231,7 @@ export function createAuth(env: AuthEnv, options?: CreateAuthOptions): AuthInsta
       // built the instance; `auth.handler(request, ctx)` still takes
       // precedence over it.
       cached.ctxRef.current = options?.ctx;
-      return cached.instance;
+      return cached.instance as AuthInstance<O>;
     }
   }
 
@@ -221,6 +244,8 @@ export function createAuth(env: AuthEnv, options?: CreateAuthOptions): AuthInsta
   // The config is assembled as a loose record: it carries a D1 binding or a
   // pg Pool as `database`, which betterAuth accepts at runtime through its
   // adapters but does not express in its option types.
+  // Built and cached with the loose options type; the cache holds instances
+  // of every options shape, and the return narrows to the caller's.
   const instance = betterAuth(authConfig as never) as unknown as AuthInstance;
   void instance.$context.catch(() => {});
 
@@ -234,5 +259,5 @@ export function createAuth(env: AuthEnv, options?: CreateAuthOptions): AuthInsta
     setCachedInstance(env, optionsKey, { instance, ctxRef });
   }
 
-  return instance;
+  return instance as AuthInstance<O>;
 }

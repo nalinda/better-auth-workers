@@ -8,8 +8,10 @@
   // .dev.vars (see README), deployed it is set with `wrangler secret put`.
   //
   // The top-level environment has no database binding: run and deploy with
-  // `--env d1` or `--env hyperdrive` (the package.json scripts do), which
-  // add `DB` or `HYPERDRIVE` to what is shared here.
+  // `--env d1` or `--env hyperdrive` (the package.json scripts do). Each
+  // named environment is a complete config of its own — wrangler does not
+  // inherit `vars` or `kv_namespaces` from this level — so both re-declare
+  // the KV namespace and vars in full alongside their `DB` / `HYPERDRIVE`.
   "kv_namespaces": [
     {
       "binding": "AUTH_KV",
