@@ -98,6 +98,29 @@ describe('Memoisation', () => {
     const env = buildEnv({ AUTH_KV: trap });
     expect(() => createAuth(env, { kv: trap, secret: VALID_SECRET })).not.toThrow();
   });
+
+  it('misses the cache when only options.secret differs, instead of sharing the first secret’s instance', () => {
+    const env = buildEnv();
+    const authA = createAuth(env, { secret: 'secret-a-at-least-32-chars-long-1234567' });
+    const authB = createAuth(env, { secret: 'secret-b-at-least-32-chars-long-1234567' });
+    expect(authA).not.toBe(authB);
+    expect(authA.options.secret).toBe('secret-a-at-least-32-chars-long-1234567');
+    expect(authB.options.secret).toBe('secret-b-at-least-32-chars-long-1234567');
+  });
+
+  it('misses the cache when only google.clientSecret differs', () => {
+    const env = buildEnv();
+    const authA = createAuth(env, { google: { clientId: 'id', clientSecret: 'secret-a' } });
+    const authB = createAuth(env, { google: { clientId: 'id', clientSecret: 'secret-b' } });
+    expect(authA).not.toBe(authB);
+  });
+
+  it('still hits the cache when the secret is identical across calls', () => {
+    const env = buildEnv();
+    const authA = createAuth(env, { secret: VALID_SECRET, basePath: '/auth' });
+    const authB = createAuth(env, { secret: VALID_SECRET, basePath: '/auth' });
+    expect(authA).toBe(authB);
+  });
 });
 
 const sendOtp = () =>
@@ -230,6 +253,27 @@ describe('Merge order and defaults', () => {
     });
     const socialProviders = auth.options.socialProviders as Record<string, unknown>;
     expect(socialProviders.google).toEqual({ clientId: 'override', clientSecret: 'override' });
+  });
+
+  it('merges a partial betterAuth.socialProviders.google override into the resolved credentials, instead of replacing them', () => {
+    // Better Auth's own `GoogleOptions` requires `clientId`/`clientSecret`,
+    // so a typed caller cannot write a credential-free partial override —
+    // the `betterAuth` retyping already catches this at compile time. The
+    // cast below simulates an untyped (JS, or `as never`) caller, which the
+    // runtime merge still has to handle safely.
+    const auth = createAuth(validEnv, {
+      google: { clientId: 'id', clientSecret: 'secret' },
+      betterAuth: { socialProviders: { google: { scope: ['openid'] } as never } },
+    });
+    const socialProviders = auth.options.socialProviders as Record<string, unknown>;
+    // A scope-only override must not drop the clientId/clientSecret the
+    // package resolved, or sign-in fails at request time with
+    // CLIENT_ID_AND_SECRET_REQUIRED despite `google: true` being configured.
+    expect(socialProviders.google).toEqual({
+      clientId: 'id',
+      clientSecret: 'secret',
+      scope: ['openid'],
+    });
   });
 
   it('applies package default basePath of /api/auth when not specified', () => {

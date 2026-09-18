@@ -1,14 +1,36 @@
 import type { BetterAuthPlugin } from 'better-auth';
 
+import { BoundedMap } from '../shared/bounded-map';
 import type { ConfigValue } from '../types';
 import type { CreateAuthOptions } from './types';
 
-// Fields whose value must never end up in the in-memory cache key. `ctx`
-// changes every request and would defeat memoisation; the rest are secrets.
-// Two option sets differing only in a secret share an instance, which is
-// fine: the key identifies a configuration's shape, and secrets come from
-// `env`, which the cache is already scoped to.
-const EXCLUDED_KEYS = new Set(['ctx', 'secret', 'clientSecret', 'connectionString']);
+// `ctx` is dropped outright: it changes every request and would defeat
+// memoisation entirely if it were part of the key.
+const NEVER_KEYED = new Set(['ctx']);
+
+// Secret-bearing fields: `options.secret` and `google.clientSecret` are
+// documented option-level inputs (not only sourced from `env`), so two
+// calls differing only in one of these must still miss the cache — sharing
+// an instance built with the wrong secret would sign and verify sessions
+// against the wrong tenant. The raw value never enters the key: each
+// distinct string seen in an isolate gets an opaque, non-reversible marker
+// instead, so the key still distinguishes configurations without leaking
+// the secret into it.
+const SECRET_LIKE_KEYS = new Set(['secret', 'clientSecret', 'connectionString']);
+
+const MAX_TRACKED_SECRETS = 16;
+const secretMarkers = new BoundedMap<string, number>(MAX_TRACKED_SECRETS);
+const secretMarkerCounter = { next: 0 };
+
+function secretMarker(value: string): string {
+  let id = secretMarkers.get(value);
+  if (id === undefined) {
+    secretMarkerCounter.next += 1;
+    id = secretMarkerCounter.next;
+    secretMarkers.set(value, id);
+  }
+  return `secret#${String(id)}`;
+}
 
 // Past this depth (deep plugin configs, nested escape-hatch options) a
 // plain object is keyed by identity instead of walked further.
@@ -47,9 +69,12 @@ function keyOf(value: ConfigValue | null, depth: number): string | undefined {
   if (!isPlainObject(value) || depth >= MAX_DEPTH) return identityKey(value);
   const entries = Object.entries(value)
     .toSorted(([a], [b]) => a.localeCompare(b))
-    .filter(([key]) => !EXCLUDED_KEYS.has(key))
+    .filter(([key]) => !NEVER_KEYED.has(key))
     .flatMap(([key, field]) => {
-      const entry = keyOf(field, depth + 1);
+      const entry =
+        typeof field === 'string' && SECRET_LIKE_KEYS.has(key)
+          ? secretMarker(field)
+          : keyOf(field, depth + 1);
       return entry === undefined ? [] : [`${JSON.stringify(key)}:${entry}`];
     });
   return `{${entries.join(',')}}`;

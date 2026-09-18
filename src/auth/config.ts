@@ -71,11 +71,34 @@ export function buildAdvancedConfig(options?: CreateAuthOptions): Loose {
 // `socialProviders` shallow-merges the same way, by provider name, so
 // `betterAuth: { socialProviders: { github: {...} } }` adds a provider
 // instead of silently replacing the package's own `google` config.
+// Merges one level deeper than a plain spread: a provider `betterAuth`
+// names in common with what the package built (typically `google`, to add
+// a `scope` or `prompt`) has its fields merged rather than replaced
+// wholesale, so the package's resolved `clientId`/`clientSecret` survive
+// an override that only meant to add to them. A provider `betterAuth`
+// names on its own (adding e.g. `github`) is used as is.
+function mergedProvider(packageConfig: ConfigValue, userConfig: ConfigValue): ConfigValue {
+  const areBothRecords = isRecord(packageConfig) && isRecord(userConfig);
+  return areBothRecords ? { ...packageConfig, ...userConfig } : userConfig;
+}
+
+function isRecord(value: ConfigValue): value is Loose {
+  return Boolean(value) && typeof value === 'object';
+}
+
 export function buildSocialProvidersConfig(
   options: CreateAuthOptions | undefined,
   socialProviders: Loose | undefined
 ): Loose | undefined {
   const fromBetterAuth = betterAuthField(options, 'socialProviders');
   if (!socialProviders && !fromBetterAuth) return undefined;
-  return { ...socialProviders, ...fromBetterAuth };
+  const merged: Loose = { ...socialProviders };
+  const userEntries = Object.entries(fromBetterAuth ?? {});
+  for (const [provider, userConfig] of userEntries) {
+    // `provider` comes from `Object.entries` on the caller's own object,
+    // not attacker-controlled input.
+    // eslint-disable-next-line security/detect-object-injection -- key from Object.entries, not external input
+    merged[provider] = mergedProvider(socialProviders?.[provider], userConfig);
+  }
+  return merged;
 }

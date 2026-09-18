@@ -19,7 +19,21 @@ function typeContract(env: AuthEnv, options: CreateAuthOptions): unknown[] {
   const misspelled: CreateAuthOptions = { ...options, magicLinks: {} };
   // @ts-expect-error unknown Better Auth options go through `betterAuth`, not the top level
   const stray: CreateAuthOptions = { ...options, trustedOrigins: [] };
-  return [bindsElsewhere, wrongKv, misspelled, stray];
+  // `betterAuth` is typed against Better Auth's own options too, not a
+  // loose record: a misspelled key one level down is also a compile error.
+  const misspeltEscapeHatch: CreateAuthOptions = {
+    ...options,
+    // @ts-expect-error `rateLimt` is not a Better Auth option; `rateLimit` is
+    betterAuth: { rateLimt: { enabled: false } },
+  };
+  const wrongNestedType: CreateAuthOptions = {
+    ...options,
+    betterAuth: {
+      // @ts-expect-error rateLimit.max must be a number, not a string
+      rateLimit: { max: 'lots' },
+    },
+  };
+  return [bindsElsewhere, wrongKv, misspelled, stray, misspeltEscapeHatch, wrongNestedType];
 }
 
 describe('createAuth: combined missing-binding diagnostics', () => {
