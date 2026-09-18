@@ -1,44 +1,15 @@
 import type { BetterAuthPlugin } from 'better-auth';
 import { APIError, createAuthEndpoint } from 'better-auth/api';
 
+import { disallowedMessage, OPTIONAL_METHOD_ROUTES } from './sign-in-routes';
 import type { CreateAuthOptions } from './types';
 
-// The sign-in routes each optional method's plugin would mount. When a
-// deployment lists `allowedMethods` but has not configured a method at all,
-// these are mounted as rejecting stubs so that method's routes answer 403
-// like a configured-but-disallowed one, instead of 404 — a client gets the
-// same clear error either way, and the routes are always there.
-interface StubbedRoute {
-  name: string;
-  path: string;
-  method: 'GET' | 'POST';
-}
-
-interface StubbedMethod {
-  method: 'phone' | 'magic-link';
-  isConfigured: (options: CreateAuthOptions) => boolean;
-  routes: StubbedRoute[];
-}
-
-const STUBBED_METHODS: StubbedMethod[] = [
-  {
-    method: 'phone',
-    isConfigured: (options) => Boolean(options.phone),
-    routes: [
-      { name: 'phoneNumberSendOtp', path: '/phone-number/send-otp', method: 'POST' },
-      { name: 'phoneNumberVerify', path: '/phone-number/verify', method: 'POST' },
-      { name: 'signInPhoneNumber', path: '/sign-in/phone-number', method: 'POST' },
-    ],
-  },
-  {
-    method: 'magic-link',
-    isConfigured: (options) => Boolean(options.magicLink),
-    routes: [
-      { name: 'signInMagicLink', path: '/sign-in/magic-link', method: 'POST' },
-      { name: 'magicLinkVerify', path: '/magic-link/verify', method: 'GET' },
-    ],
-  },
-];
+// The sign-in routes each optional method's plugin would mount (the shared
+// table in sign-in-routes.ts). When a deployment lists `allowedMethods` but
+// has not configured a method at all, these are mounted as rejecting stubs
+// so that method's routes answer 403 like a configured-but-disallowed one,
+// instead of 404 — a client gets the same clear error either way, and the
+// routes are always there.
 
 /**
  * Builds a plugin mounting 403 stubs for every method that is not in
@@ -52,13 +23,11 @@ export function buildDisallowedMethodStubs(
   const allowed = options?.allowedMethods;
   if (!allowed) return;
   const endpoints: NonNullable<BetterAuthPlugin['endpoints']> = {};
-  for (const { method, isConfigured, routes } of STUBBED_METHODS) {
+  for (const { method, isConfigured, routes } of OPTIONAL_METHOD_ROUTES) {
     if (allowed.includes(method) || isConfigured(options)) continue;
     for (const route of routes) {
       endpoints[route.name] = createAuthEndpoint(route.path, { method: route.method }, () => {
-        throw new APIError('FORBIDDEN', {
-          message: `${method} sign-in is not enabled for this deployment`,
-        });
+        throw new APIError('FORBIDDEN', { message: disallowedMessage(method) });
       });
     }
   }

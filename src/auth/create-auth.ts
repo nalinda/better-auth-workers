@@ -2,6 +2,7 @@ import { betterAuth, type BetterAuthOptions } from 'better-auth';
 import { createAuthMiddleware } from 'better-auth/api';
 import type { admin, bearer, magicLink, phoneNumber } from 'better-auth/plugins';
 
+import { DEFAULT_BASE_PATH } from '../shared/base-path';
 import { BoundedMap } from '../shared/bounded-map';
 import { type ContextRef, withHandlerContext } from '../shared/non-blocking';
 import type { AuthEnv, ConfigValue, ExecutionContext } from '../types';
@@ -178,7 +179,7 @@ function buildAuthConfig(
   const rateLimit = buildRateLimitConfig(options, secondaryStorage);
 
   return {
-    basePath: options?.basePath ?? '/api/auth',
+    basePath: options?.basePath ?? DEFAULT_BASE_PATH,
     baseURL,
     secret,
     ...(database !== undefined && { database }),

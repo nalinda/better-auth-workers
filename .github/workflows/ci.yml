@@ -31,7 +31,7 @@ jobs:
         run: bun run lint
 
   types:
-    name: Type check
+    name: Type check & build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -48,6 +48,12 @@ jobs:
 
       - name: Type check
         run: bun run ts-check
+
+      # The published artefact: the same bundling and declaration emit the
+      # release workflow runs, so a build that would break `bun publish`
+      # fails here, on the pull request.
+      - name: Build (dist)
+        run: bun run build
 
   format-and-audit:
     name: Format & Knip

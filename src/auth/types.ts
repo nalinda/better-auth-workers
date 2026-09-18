@@ -1,6 +1,7 @@
 import type { BetterAuthPlugin } from 'better-auth';
 
 import type { ConfigValue, ExecutionContext, KVStore } from '../types';
+import type { PgPoolConstructor } from './postgres-pool';
 
 export interface CreateAuthPhoneOptions {
   sendOTP: (args: { phoneNumber: string; code: string }, request?: Request) => Promise<void> | void;
@@ -26,7 +27,7 @@ export type HyperdriveDatabaseOption =
   Hyperdrive | { connectionString: string; [key: string]: ConfigValue };
 
 export interface PgDriver {
-  Pool: new (config: { connectionString?: string; max?: number }) => { end(): Promise<void> };
+  Pool: PgPoolConstructor;
 }
 
 export interface CreateAuthDatabaseOptions {

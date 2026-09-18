@@ -1,53 +1,99 @@
-import { describe, expect, it } from 'bun:test';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+
+import { beforeAll, describe, expect, it } from 'bun:test';
 
 import type { CreateAuthMagicLinkOptions, CreateAuthPhoneOptions } from '../src/index';
 
-async function loadEntryPoint(subpath = '.'): Promise<Record<string, unknown>> {
-  const candidates =
-    subpath === '.'
-      ? [
-          'better-auth-workers',
-          '../src/index',
-          '../src/index.ts',
-          '../dist/index',
-          '../dist/index.js',
-        ]
-      : [
-          `better-auth-workers/${subpath.replace(/^\.\//, '')}`,
-          `../src/${subpath.replace(/^\.\//, '')}`,
-          `../src/${subpath.replace(/^\.\//, '')}.ts`,
-          `../dist/${subpath.replace(/^\.\//, '')}`,
-          `../dist/${subpath.replace(/^\.\//, '')}.js`,
-        ];
+// These tests exercise what a consumer installs: the `package.json#exports`
+// map and the dist files it points at, not the TypeScript sources. dist is
+// rebuilt first so the assertions cannot pass against a stale artefact.
+const rootDir = path.resolve(import.meta.dir, '..');
 
-  for (const candidate of candidates) {
-    try {
-      return (await import(candidate)) as Record<string, unknown>;
-    } catch {
-      // ignore resolution/loading errors
-    }
-  }
-  return {};
+interface ExportTarget {
+  types: string;
+  import: string;
+  default: string;
 }
 
+interface PackageJson {
+  exports: Record<string, ExportTarget>;
+  files: string[];
+}
+
+function readPackageJson(): PackageJson {
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path
+  return JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8')) as PackageJson;
+}
+
+function exportTarget(subpath: string): ExportTarget {
+  const target = new Map(Object.entries(readPackageJson().exports)).get(subpath);
+  if (!target) throw new Error(`package.json#exports has no "${subpath}" entry`);
+  return target;
+}
+
+function distFile(relative: string): string {
+  return path.join(rootDir, relative);
+}
+
+async function loadExport(subpath: string): Promise<Record<string, unknown>> {
+  return (await import(distFile(exportTarget(subpath).import))) as Record<string, unknown>;
+}
+
+beforeAll(() => {
+  const result = spawnSync(Bun.argv[0] ?? 'bun', ['run', 'build'], {
+    cwd: rootDir,
+    encoding: 'utf8',
+  });
+  if (result.status !== 0) {
+    throw new Error(`bun run build failed:\n${result.stdout}\n${result.stderr}`);
+  }
+});
+
+describe('package.json#exports', () => {
+  it('publishes dist, and every export target is a file the build produces', () => {
+    const pkg = readPackageJson();
+    expect(pkg.files).toContain('dist');
+    expect(Object.keys(pkg.exports).toSorted((a, b) => a.localeCompare(b))).toEqual([
+      '.',
+      './client',
+    ]);
+    for (const target of Object.values(pkg.exports)) {
+      for (const file of [target.types, target.import, target.default]) {
+        expect(file.startsWith('./dist/')).toBe(true);
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- paths from package.json
+        expect(fs.existsSync(distFile(file))).toBe(true);
+      }
+      expect(target.default).toBe(target.import);
+    }
+  });
+});
+
 describe('Entry points export documented functions', () => {
-  it('exports createAuth as a function from . entry point', async () => {
-    const root = await loadEntryPoint('.');
+  it('exports createAuth as a function from the built . entry point', async () => {
+    const root = await loadExport('.');
     expect(typeof root.createAuth).toBe('function');
   });
 
-  it('exports createSessionClient as a function from ./client entry point', async () => {
-    const client = await loadEntryPoint('./client');
+  it('exports createSessionClient and requireSession from the built ./client entry point', async () => {
+    const client = await loadExport('./client');
     expect(typeof client.createSessionClient).toBe('function');
-  });
-
-  it('exports requireSession as a function from ./client entry point', async () => {
-    const client = await loadEntryPoint('./client');
     expect(typeof client.requireSession).toBe('function');
   });
 
-  it('exports the CreateAuth*Options types, including CreateAuthMagicLinkOptions', () => {
-    // Type-level: this compiles only if the type is exported from '.'.
+  it('declares the CreateAuth*Options types in the . declaration file', () => {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- path from package.json
+    const declarations = fs.readFileSync(distFile(exportTarget('.').types), 'utf8');
+    for (const name of [
+      'CreateAuthOptions',
+      'CreateAuthMagicLinkOptions',
+      'CreateAuthPhoneOptions',
+      'ConfigValue',
+    ]) {
+      expect(declarations).toContain(name);
+    }
+    // Type-level: compiles only if the types are exported from '.'.
     const magicLink: CreateAuthMagicLinkOptions = { sendMagicLink: () => {} };
     const phone: CreateAuthPhoneOptions = { sendOTP: () => {} };
     expect(typeof magicLink.sendMagicLink).toBe('function');

@@ -11,6 +11,8 @@ This example demonstrates how to use `better-auth-workers` with [Hono](https://h
   - `hyperdrive`: Postgres backed through Cloudflare Hyperdrive.
 - **Local delivery**: Console-logging `sendOTP` and `sendMagicLink` for local testing (clearly marked not for production use).
 
+The database binding lives only in the two named environments; the top-level (unnamed) environment in `wrangler.jsonc` carries the shared KV namespace and vars but no `DB` or `HYPERDRIVE`, so a bare `wrangler dev` or `wrangler deploy` starts a Worker whose `createAuth` fails its configuration check on the first request. Always pass `--env d1` or `--env hyperdrive` — every script in `package.json` (`dev`, `dev:d1`, `dev:hyperdrive`, `dev:api`, `dev:api:hyperdrive`) does.
+
 ## Quick Start
 
 ### 1. Install dependencies

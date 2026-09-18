@@ -50,7 +50,7 @@ This package does those four things and stops.
 - **`createSessionClient`** for other Workers: verify a session over a service binding, cache it in KV, and get a Hono `requireSession()` middleware.
 - **Bearer tokens** for mobile and CLI clients through Better Auth's bearer plugin.
 - **SQL migrations shipped in the package** for both Postgres and SQLite, covering the default schema.
-- Typed `Env` for the bindings the package reads, and a startup check that names every missing one at once, not on the first request.
+- Typed `Env` for the bindings the package reads, and a configuration check on the first `createAuth` call that names every missing binding at once, rather than failing one at a time as requests reach them.
 
 ## Installation
 
@@ -169,7 +169,7 @@ Call `auth.handler(request, ctx)` with the request's `ExecutionContext` on every
 | `bearer`         | `boolean`                                                                      | `false`                  | Enables the bearer plugin for non-browser clients.                                                                                 |
 | `allowedMethods` | `Array<'phone' \| 'google' \| 'magic-link'>`                                   | all enabled              | Rejects sign-in attempts through any other method.                                                                                 |
 | `plugins`        | `BetterAuthPlugin[]`                                                           | `[]`                     | Extra Better Auth plugins, appended after the built-in ones (`betterAuth.plugins` is appended the same way, never replacing them). |
-| `betterAuth`     | `Record<string, unknown>`                                                      | `{}`                     | Escape hatch. Merged last, so it can override anything above.                                                                      |
+| `betterAuth`     | `Record<string, ConfigValue>`                                                  | `{}`                     | Escape hatch. Merged last, so it can override anything above.                                                                      |
 | `ctx`            | `ExecutionContext`                                                             | none                     | Fallback context for `waitUntil` work; `auth.handler(request, ctx)` takes precedence.                                              |
 
 **Package defaults under `betterAuth`.** Five Better Auth settings get a default from this package: `session.cookieCache.enabled: true`, `rateLimit.enabled: true` and `rateLimit.storage: 'secondary-storage'` (the limiter is on, in KV — Better Auth alone would leave it off in a deployed Worker), `advanced.database.validateSchema: false`, and `advanced.ipAddress.ipAddressHeaders: ['cf-connecting-ip', 'x-forwarded-for']` (so the limiter keys on Cloudflare's unspoofable client IP, falling back to the header the session client forwards). Whatever you set under `betterAuth.session`, `betterAuth.rateLimit` or `betterAuth.advanced` is shallow-merged over those defaults, field by field, so you state only what you change and can override the default itself (e.g. `betterAuth: { rateLimit: { storage: 'memory' } }`). Your `betterAuth.hooks` are composed with the package's own hooks (method restriction, cache invalidation), which run first in both slots.

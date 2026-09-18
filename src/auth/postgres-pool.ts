@@ -1,26 +1,21 @@
 import type { HandlerHost } from '../shared/handler-host';
 import type { ContextRef } from '../shared/non-blocking';
-import type { ConfigValue, ExecutionContext } from '../types';
-
-type PgPoolConfig = {
-  connectionString?: string;
-  max?: number;
-  [key: string]: ConfigValue;
-};
+import type { ExecutionContext } from '../types';
 
 export interface PgPool {
   end(): Promise<void>;
-  [key: string]: ConfigValue;
 }
+
+// The shape of `pg.Pool` this package relies on, whether the driver comes
+// from the consumer (`database.pg`) or from `require('pg')`.
+export type PgPoolConstructor = new (config: { connectionString?: string; max?: number }) => PgPool;
 
 interface PgModule {
-  Pool: new (config: PgPoolConfig) => PgPool;
-  default?: {
-    Pool: new (config: PgPoolConfig) => PgPool;
-  };
+  Pool: PgPoolConstructor;
+  default?: { Pool: PgPoolConstructor };
 }
 
-export function loadPgPoolClass(): (new (config: PgPoolConfig) => PgPool) | undefined {
+export function loadPgPoolClass(): PgPoolConstructor | undefined {
   try {
     const req = typeof require === 'function' ? require : undefined;
     const pg = req ? (req('pg') as PgModule) : undefined;

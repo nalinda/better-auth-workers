@@ -1,5 +1,6 @@
 import { APIError } from 'better-auth';
 
+import { disallowedMessage, methodOfPath } from './sign-in-routes';
 import type { CreateAuthOptions } from './types';
 
 type AllowedMethod = 'phone' | 'google' | 'magic-link';
@@ -9,19 +10,8 @@ interface BeforeHookContext {
   body?: { provider?: string; [key: string]: unknown };
 }
 
-const PHONE_PATH_PREFIXES = ['/phone-number/', '/sign-in/phone-number'];
-const MAGIC_LINK_PATHS = new Set(['/sign-in/magic-link', '/magic-link/verify']);
-
-function isPhoneRoute(path: string): boolean {
-  return PHONE_PATH_PREFIXES.some((prefix) => path.startsWith(prefix));
-}
-
-function isMagicLinkRoute(path: string): boolean {
-  return MAGIC_LINK_PATHS.has(path);
-}
-
-function forbidden(message: string): never {
-  throw new APIError('FORBIDDEN', { message });
+function forbidden(method: AllowedMethod): never {
+  throw new APIError('FORBIDDEN', { message: disallowedMessage(method) });
 }
 
 /**
@@ -32,9 +22,10 @@ function forbidden(message: string): never {
  * client always gets a clear 403 rather than a 404.
  *
  * Get-session, sign-out and account-management routes are never restricted:
- * the check matches only the sign-in routes of google and magic link, and
- * every route the phone plugin mounts (`/phone-number/*`, which includes
- * its password-reset routes as well as sign-in and OTP).
+ * the check matches only google's `/sign-in/social` and the routes listed
+ * for each method in sign-in-routes.ts (every route the phone plugin
+ * mounts, `/phone-number/*`, which includes its password-reset routes as
+ * well as sign-in and OTP).
  *
  * Returns `undefined` when `options.allowedMethods` is not set, since there
  * is nothing to restrict.
@@ -48,25 +39,15 @@ export function buildAllowedMethodsHook(
   const allowed = new Set<AllowedMethod>(allowedMethods);
 
   return (ctx: BeforeHookContext) => {
-    if (isPhoneRoute(ctx.path)) {
-      if (!allowed.has('phone')) {
-        forbidden('phone sign-in is not enabled for this deployment');
-      }
-      return;
-    }
-
-    if (isMagicLinkRoute(ctx.path)) {
-      if (!allowed.has('magic-link')) {
-        forbidden('magic-link sign-in is not enabled for this deployment');
-      }
+    const method = methodOfPath(ctx.path);
+    if (method) {
+      if (!allowed.has(method)) forbidden(method);
       return;
     }
 
     if (ctx.path === '/sign-in/social') {
       const provider = ctx.body?.provider;
-      if (provider === 'google' && !allowed.has('google')) {
-        forbidden('google sign-in is not enabled for this deployment');
-      }
+      if (provider === 'google' && !allowed.has('google')) forbidden('google');
     }
   };
 }

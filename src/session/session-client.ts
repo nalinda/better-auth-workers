@@ -1,3 +1,4 @@
+import { DEFAULT_BASE_PATH } from '../shared/base-path';
 import {
   DEFAULT_COOKIE_NAME,
   sessionCookiePairFrom,
@@ -20,7 +21,6 @@ import {
   SessionUnavailableError,
 } from './types';
 
-const DEFAULT_BASE_PATH = '/api/auth';
 // Service bindings ignore the host; it only needs to be a valid absolute URL.
 const SERVICE_BINDING_ORIGIN = 'https://auth.internal';
 

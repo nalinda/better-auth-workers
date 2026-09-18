@@ -6,6 +6,10 @@
   "compatibility_flags": ["nodejs_compat"],
   // BETTER_AUTH_SECRET is a secret, not a var: locally it comes from
   // .dev.vars (see README), deployed it is set with `wrangler secret put`.
+  //
+  // The top-level environment has no database binding: run and deploy with
+  // `--env d1` or `--env hyperdrive` (the package.json scripts do), which
+  // add `DB` or `HYPERDRIVE` to what is shared here.
   "kv_namespaces": [
     {
       "binding": "AUTH_KV",

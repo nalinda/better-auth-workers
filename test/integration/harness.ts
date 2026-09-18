@@ -38,7 +38,8 @@ const wranglerBin = path.resolve(rootDir, 'node_modules/.bin/wrangler');
 const exampleConfig = path.resolve(rootDir, 'examples/hono/wrangler.jsonc');
 const authWrapperEntry = path.resolve(import.meta.dir, 'auth/index.ts');
 const gatewayConfig = path.resolve(import.meta.dir, 'gateway.wrangler.jsonc');
-const apiConfig = path.resolve(import.meta.dir, 'api.wrangler.jsonc');
+const exampleApiConfig = path.resolve(rootDir, 'examples/hono/api.wrangler.jsonc');
+const exampleApiEntry = path.resolve(rootDir, 'examples/hono/src/api.ts');
 const persistRoot = path.resolve(import.meta.dir, '.wrangler');
 
 const READY_TIMEOUT_MS = 90_000;
@@ -208,12 +209,20 @@ interface ExampleConfig {
   $schema?: string;
   main?: string;
   vars?: Record<string, string>;
-  env?: Record<string, { vars?: Record<string, string> }>;
+  env?: Record<
+    string,
+    { vars?: Record<string, string>; services?: { binding: string; service: string }[] }
+  >;
 }
 
 function readExampleConfig(): ExampleConfig {
   // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path
   return parseJsonc<ExampleConfig>(fs.readFileSync(exampleConfig, 'utf8'));
+}
+
+function readExampleApiConfig(): ExampleConfig {
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed repo-relative path
+  return parseJsonc<ExampleConfig>(fs.readFileSync(exampleApiConfig, 'utf8'));
 }
 
 function exampleAppOrigin(backend: Backend): string {
@@ -237,6 +246,30 @@ function writeAuthWorkerConfig(persistTo: string): string {
   // wrangler dev reads it from a .dev.vars beside the config it is given.
   // eslint-disable-next-line security/detect-non-literal-fs-filename -- test-owned persist directory
   fs.writeFileSync(path.join(persistTo, '.dev.vars'), `BETTER_AUTH_SECRET=${INTEGRATION_SECRET}\n`);
+  return configPath;
+}
+
+// The API Worker under test is likewise the example's own api.wrangler.jsonc
+// with `main` made absolute and its `AUTH` service binding pointed at the
+// counting gateway that fronts the auth Worker, instead of the auth Worker
+// directly. Everything else (name, KV namespace, flags) is what the example
+// ships.
+function writeApiWorkerConfig(persistTo: string): string {
+  const config = readExampleApiConfig();
+  delete config.$schema;
+  config.main = exampleApiEntry;
+  const environments = Object.entries(config.env ?? {});
+  for (const [backend, envConfig] of environments) {
+    const services = envConfig.services ?? [];
+    for (const service of services) {
+      if (service.binding === 'AUTH') service.service = `integration-gateway-${backend}`;
+    }
+  }
+  const configPath = path.join(persistTo, 'api.wrangler.json');
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- test-owned persist directory
+  fs.mkdirSync(persistTo, { recursive: true });
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- test-owned persist directory
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
   return configPath;
 }
 
@@ -269,6 +302,7 @@ function spawnWrangler(
   port: number,
   persistTo: string,
   authConfig: string,
+  apiConfig: string,
   extraEnv: Record<string, string>
 ): ChildProcess {
   return spawn(
@@ -325,9 +359,10 @@ export async function startDevServer(backend: Backend): Promise<DevServer> {
     applyD1Migration(persistTo);
   }
   const authConfig = writeAuthWorkerConfig(persistTo);
+  const apiConfig = writeApiWorkerConfig(persistTo);
 
   const port = await freePort();
-  const child = spawnWrangler(backend, port, persistTo, authConfig, extraEnv);
+  const child = spawnWrangler(backend, port, persistTo, authConfig, apiConfig, extraEnv);
 
   let buffer = '';
   const state: { exited?: { code: number | null; signal: NodeJS.Signals | null } } = {};

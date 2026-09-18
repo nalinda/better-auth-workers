@@ -1,5 +1,5 @@
 import type { AuthEnv, ConfigValue } from '../types';
-import { loadPgPoolClass, type PgPool } from './postgres-pool';
+import { loadPgPoolClass, type PgPool, type PgPoolConstructor } from './postgres-pool';
 import type {
   CreateAuthDatabaseOptions,
   CreateAuthOptions,
@@ -73,9 +73,7 @@ function resolveD1Binding(
 // is bundled, since a bundler only includes modules it can see imported;
 // `require('pg')` is a fallback for runtimes that resolve modules at
 // runtime (Bun, Node).
-function resolvePgPoolClass(
-  options?: CreateAuthOptions
-): (new (config: { connectionString?: string; max?: number }) => PgPool) | undefined {
+function resolvePgPoolClass(options?: CreateAuthOptions): PgPoolConstructor | undefined {
   const database = options?.database;
   if (database && typeof database === 'object' && 'pg' in database && database.pg) {
     return database.pg.Pool;
