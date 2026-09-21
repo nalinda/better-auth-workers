@@ -168,7 +168,7 @@ await authClient.phoneNumber.verify({ phoneNumber: '+15555550123', code: '123456
 | `baseURL`        | `string`                                                                                 | `env.AUTH_BASE_URL`      | Public origin used for callbacks and cookies.                                                                                      |
 | `secret`         | `string`                                                                                 | `env.BETTER_AUTH_SECRET` | Signing secret.                                                                                                                    |
 | `database`       | `{ hyperdrive: Hyperdrive, pg } \| { d1: D1Database } \| D1Database`                     | required                 | Primary store; a bare D1 binding is shorthand for `{ d1 }`. See [Storage](#storage).                                               |
-| `kv`             | `KVNamespace`                                                                            | required                 | Secondary storage for session cache and rate limiting.                                                                             |
+| `kv`             | `KVNamespace`                                                                            | required                 | Secondary storage for sessions and rate limiting.                                                                                  |
 | `phone`          | `{ sendOTP, otpLength?, expiresIn?, allowedAttempts?, signUpOnVerification? }`           | off                      | Enables the phone-number plugin. See [Phone OTP](#phone-otp).                                                                      |
 | `google`         | `boolean \| { clientId, clientSecret }`                                                  | off                      | Enables Google sign-in. `true` reads the secrets from `env`.                                                                       |
 | `magicLink`      | `{ sendMagicLink, expiresIn?, disableSignUp? }`                                          | off                      | Enables magic-link sign-in. See [Magic link sign-in](#magic-link-sign-in).                                                         |
@@ -406,7 +406,7 @@ Enable the bearer plugin:
 bearer: true;
 ```
 
-Clients then receive the session token in a `set-auth-token` response header after sign-in and send it back as `Authorization: Bearer <token>`. `createSessionClient` accepts either cookies or bearer tokens.
+Clients then receive the session token in a `set-auth-token` response header after sign-in and send it back as `Authorization: Bearer <token>`. Send that header value back exactly as it arrived. It is signed, and only the signed value counts as a credential. The bare `session.token` you can see in a sign-in response body is not one: a request carrying it is treated as having no credential at all. `createSessionClient` accepts either cookies or bearer tokens.
 
 ## Migrations
 
