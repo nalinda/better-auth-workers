@@ -132,7 +132,7 @@ app.on(['GET', 'POST'], '/auth/*', (c) => {
 export default app;
 ```
 
-That is a complete auth Worker. Better Auth's routes are served under `/auth/*`, sessions are stored in Postgres and cached in KV, and OTP codes go wherever your `sendOTP` sends them.
+That is a complete auth Worker. Better Auth's routes are served under `/auth/*`, users and accounts live in Postgres, sessions live in KV, and OTP codes go wherever your `sendOTP` sends them.
 
 On the browser side use Better Auth's own client:
 
@@ -221,7 +221,7 @@ Use Postgres when your application data already lives there and you want foreign
 
 `kv` is required; `createAuth` refuses to start without `options.kv` or `env.AUTH_KV`, even when you supply your own store through `betterAuth.secondaryStorage`, because sign-out invalidation (below) deletes from that namespace. It is wired as Better Auth's secondary storage, which does two things:
 
-- **Session cache.** Session lookups hit KV before the database. With cookie caching enabled — this package's default — most requests never reach the primary store.
+- **Session storage.** Sessions are stored in KV, not cached there: the `session` table in Postgres or D1 is not written and is not the source of truth for session state. A session lookup is a KV read, and with cookie caching enabled — this package's default — most requests do not even need that. Two consequences follow. Sessions survive only as long as their KV entry, and revoking one is subject to KV's eventual consistency (see [Using sessions from another Worker](#using-sessions-from-another-worker)).
 - **Rate limiter storage.** Better Auth's rate limiter is turned on and pointed at KV, so counters are shared across isolates instead of sitting in per-isolate memory. (Left to itself, Better Auth only enables the limiter when `NODE_ENV` is `production`, which a deployed Worker's `process.env` does not carry.) `betterAuth.rateLimit` tunes or disables it.
 
 Sharing across isolates is best-effort, not exact. Counters are written to KV at most once per second per key — KV refuses faster writes — and kept in memory between writes, so a burst from one client never fails a request outright. Each write merges KV's current count with whatever this isolate counted since its last sync, so isolates counting the same client converge on the true total rather than overwriting each other. Because the counter is a KV read-then-write rather than an atomic increment, and KV is only eventually consistent, concurrent requests across isolates or regions can still undercount briefly and let a burst exceed the configured limit.
@@ -383,7 +383,7 @@ How it works:
 
 1. The client forwards the incoming request's `Cookie` (or `Authorization`) header to the auth Worker's `get-session` route over the service binding.
 2. The result is cached in KV keyed by the bare session token for the remaining session lifetime, with the credential exactly as presented (the signed cookie value, or the bearer token) recorded inside the entry; a read is served from the cache only when its credential matches one the entry recorded, so a cookie with a forged signature never hits an entry a genuine request warmed.
-3. Sign-out and session revocation in the auth Worker delete the KV entry, so the API sees the change on the next request.
+3. Sign-out and session revocation in the auth Worker delete the KV entry — both the cached copy and the session itself, since sessions live in KV — so the API stops seeing the session.
 
 Step 3 covers:
 
@@ -395,6 +395,8 @@ Step 3 covers:
 A route that revokes every session of a user lists that user's sessions before the revocation and clears each cache entry afterward. Not covered: the password-reset routes (`/reset-password`, `/phone-number/reset-password` with `revokeSessionsOnPasswordReset`), since they identify the user by a one-time token rather than a session — and sessions that simply expire, whose cache entries just expire along with them.
 
 Sharing the KV namespace between the two Workers is what makes step 3 work. Using separate namespaces still functions, but revocation is only visible after the cache entry expires.
+
+Revocation is not instant either way. KV is eventually consistent: a delete propagates across Cloudflare's points of presence in up to about 60 seconds, so a request reaching a location that still holds the old value can be served with the revoked session until then. The location that handled the revocation sees it immediately; the rest catch up. If you need a session to be unusable everywhere the moment it is revoked, keep a revocation check in a Durable Object and consult it on the requests that matter — the package does not do this for you.
 
 ## Non-browser clients
 
