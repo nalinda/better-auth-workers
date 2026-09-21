@@ -78,6 +78,13 @@ export function bearerCredentialFromHeader(header: string | null | undefined): s
   }
 }
 
+// The bearer credential a caller presents, held to the same signed
+// `<token>.<signature>` form as the cookie. A dotless header value is the
+// bare session token, which the auth Worker refuses; rejecting it here too
+// means the session client never uses one as a cache lookup key, so a bare
+// token cannot be served from an entry that happens to have recorded one.
 export function sessionCredentialFromAuthorizationHeader(request: Request): string | undefined {
-  return bearerCredentialFromHeader(request.headers.get('authorization'));
+  const credential = bearerCredentialFromHeader(request.headers.get('authorization'));
+  if (!credential || !credential.includes('.')) return;
+  return credential;
 }

@@ -29,7 +29,7 @@ function makeSessionRequest(): Request {
 
 function makeBearerRequest(): Request {
   return new Request('https://api.example.com/me', {
-    headers: { authorization: `Bearer ${TOKEN}` },
+    headers: { authorization: `Bearer ${SIGNED_TOKEN}` },
   });
 }
 
@@ -79,7 +79,7 @@ function fakeAuthBinding(expiresAt: Date) {
     if (
       cookie.includes(encodeURIComponent(SIGNED_TOKEN)) ||
       cookie.includes(SIGNED_TOKEN) ||
-      authorization === `Bearer ${TOKEN}`
+      authorization === `Bearer ${SIGNED_TOKEN}`
     ) {
       return Promise.resolve(Response.json(sessionPayload(expiresAt)));
     }
@@ -144,7 +144,7 @@ describe('createSessionClient verifies sessions over a service binding with a KV
 
       expect(fetch).toHaveBeenCalledTimes(1);
       const forwarded = seen[0];
-      expect(forwarded.headers.get('authorization')).toBe(`Bearer ${TOKEN}`);
+      expect(forwarded.headers.get('authorization')).toBe(`Bearer ${SIGNED_TOKEN}`);
 
       expect(result).not.toBeNull();
       expect(result!.session.token).toBe(TOKEN);
@@ -204,7 +204,7 @@ describe('createSessionClient verifies sessions over a service binding with a KV
 
       const result = await client.get(
         new Request('https://api.example.com/me', {
-          headers: { authorization: 'Bearer nope-not-a-real-token' },
+          headers: { authorization: 'Bearer nope.not-a-real-token' },
         })
       );
 
@@ -306,6 +306,8 @@ describe('createSessionClient verifies sessions over a service binding with a KV
       expect(binding.fetch).toHaveBeenCalledTimes(2);
     });
 
+    // Both forms carry the same signed value, so one session is one entry
+    // under the bare-token key, whichever header the request used.
     it('keeps the cookie and bearer forms of one session in a single entry', async () => {
       const { binding, fetch } = fakeAuthBinding(new Date(Date.now() + 3_600_000));
       const kv = new FakeKV();
@@ -313,12 +315,39 @@ describe('createSessionClient verifies sessions over a service binding with a KV
 
       await client.get(makeSessionRequest());
       await client.get(makeBearerRequest());
-      expect(fetch).toHaveBeenCalledTimes(2);
-      expect(kv.store.size).toBe(1);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(kv.store.keys().toArray()).toEqual([sessionCacheKey(TOKEN)]);
+      const entry = JSON.parse(kv.store.get(sessionCacheKey(TOKEN)) ?? '{}') as {
+        credentials: string[];
+      };
+      expect(entry.credentials).toEqual([SIGNED_TOKEN]);
 
       await client.get(makeSessionRequest());
       await client.get(makeBearerRequest());
-      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    // The auth Worker refuses a bare token (the bearer plugin runs with
+    // `requireSignature`), so the session client must not let one in either
+    // — not even past the cache, which is never consulted for it.
+    it('ignores a bare bearer token even when an entry already records that exact string', async () => {
+      const expiresAt = new Date(Date.now() + 3_600_000);
+      const { binding, fetch } = fakeAuthBinding(expiresAt);
+      const kv = new FakeKV();
+      // An entry under this session that has the bare token recorded as a
+      // verified credential, as one written before signatures were required.
+      const stale = { credentials: [TOKEN], session: sessionPayload(expiresAt) };
+      kv.store.set(sessionCacheKey(TOKEN), JSON.stringify(stale));
+      const client = buildSessionClient({ auth: binding, kv, basePath: BASE_PATH });
+
+      const result = await client.get(
+        new Request('https://api.example.com/me', {
+          headers: { authorization: `Bearer ${TOKEN}` },
+        })
+      );
+
+      expect(result).toBeNull();
+      expect(fetch).toHaveBeenCalledTimes(0);
     });
   });
 
@@ -332,7 +361,7 @@ describe('createSessionClient verifies sessions over a service binding with a KV
       // be accepted by the auth Worker, but must not be sent alongside it.
       const result = await client.get(
         new Request('https://api.example.com/me', {
-          headers: { cookie: FORGED_COOKIE, authorization: `Bearer ${TOKEN}` },
+          headers: { cookie: FORGED_COOKIE, authorization: `Bearer ${SIGNED_TOKEN}` },
         })
       );
 
@@ -349,11 +378,11 @@ describe('createSessionClient verifies sessions over a service binding with a KV
 
       await client.get(
         new Request('https://api.example.com/me', {
-          headers: { authorization: `Bearer ${TOKEN}`, cookie: 'unrelated=1' },
+          headers: { authorization: `Bearer ${SIGNED_TOKEN}`, cookie: 'unrelated=1' },
         })
       );
 
-      expect(seen[0].headers.get('authorization')).toBe(`Bearer ${TOKEN}`);
+      expect(seen[0].headers.get('authorization')).toBe(`Bearer ${SIGNED_TOKEN}`);
       expect(seen[0].headers.get('cookie')).toBeNull();
     });
 
@@ -395,22 +424,32 @@ describe('createSessionClient verifies sessions over a service binding with a KV
     });
 
     it('falls back to the incoming x-forwarded-for and sends nothing when neither is present', async () => {
-      const { binding, seen } = fakeAuthBinding(new Date(Date.now() + 3_600_000));
-      const client = buildSessionClient({ auth: binding, kv: new FakeKV(), basePath: BASE_PATH });
-
-      await client.get(
+      const expiresAt = new Date(Date.now() + 3_600_000);
+      const withForwardedFor = fakeAuthBinding(expiresAt);
+      const withoutAny = fakeAuthBinding(expiresAt);
+      // Separate caches: both requests must reach their auth Worker, and the
+      // two carry the same signed credential.
+      await buildSessionClient({
+        auth: withForwardedFor.binding,
+        kv: new FakeKV(),
+        basePath: BASE_PATH,
+      }).get(
         new Request('https://api.example.com/me', {
           headers: { cookie: VALID_COOKIE, 'x-forwarded-for': '198.51.100.9' },
         })
       );
-      await client.get(
+      await buildSessionClient({
+        auth: withoutAny.binding,
+        kv: new FakeKV(),
+        basePath: BASE_PATH,
+      }).get(
         new Request('https://api.example.com/me', {
-          headers: { authorization: `Bearer ${TOKEN}` },
+          headers: { authorization: `Bearer ${SIGNED_TOKEN}` },
         })
       );
 
-      expect(seen[0].headers.get('x-forwarded-for')).toBe('198.51.100.9');
-      expect(seen[1].headers.get('x-forwarded-for')).toBeNull();
+      expect(withForwardedFor.seen[0].headers.get('x-forwarded-for')).toBe('198.51.100.9');
+      expect(withoutAny.seen[0].headers.get('x-forwarded-for')).toBeNull();
     });
   });
 

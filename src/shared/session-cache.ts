@@ -7,17 +7,18 @@ export const KV_MIN_TTL_SECONDS = 60;
 // one thing every revocation point on the auth Worker has in hand (a
 // sign-out's cookie, a revoke body, a listed session). What makes the key
 // safe is the entry, not the key: it records the exact credentials the
-// auth Worker verified (the signed cookie value `<token>.<signature>`, or
-// the bearer token), and a request presenting anything else — a cookie
-// with a forged signature, say — is treated as a miss and sent to the auth
-// Worker, which is the only place a signature is checked. Nothing here has
-// to reproduce Better Auth's cookie signing.
+// auth Worker verified (the signed `<token>.<signature>` value, sent as a
+// cookie or as a bearer credential), and a request presenting anything
+// else — a cookie with a forged signature, say — is treated as a miss and
+// sent to the auth Worker, which is the only place a signature is checked.
+// Nothing here has to reproduce Better Auth's cookie signing.
 export function sessionCacheKey(token: string): string {
   return `${CACHE_KEY_PREFIX}${token}`;
 }
 
-// Better Auth signs cookies as `<token>.<signature>`; a bearer credential
-// may be either form. The bare token is the part before the first dot.
+// Better Auth signs cookies as `<token>.<signature>`, and a bearer
+// credential is held to that same signed form. The bare token is the part
+// before the first dot — a cache key, never a credential in its own right.
 export function sessionTokenOf(credential: string): string {
   const [token] = credential.split('.', 1);
   return token;
