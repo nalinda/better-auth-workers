@@ -128,8 +128,10 @@ export function assertInvalidationInternals(ctx: unknown): asserts ctx is HookCo
 // Our `hooks.before` runs before the bearer plugin's, which is what turns
 // `Authorization: Bearer …` into the session cookie, so a bearer caller is
 // read off the header here, with the same parsing the session client uses.
-// The token is only ever used to look the session up, so an unsigned or
-// forged value resolves to nothing.
+// The token is only ever used to look a session up; nothing is invalidated
+// on the strength of it. The endpoint still has to succeed for the `after`
+// hook to act, and the bearer plugin only lets a signed
+// `<token>.<signature>` credential authenticate one.
 function bearerSessionToken(ctx: HookContext): string | undefined {
   const header = ctx.request?.headers.get('authorization') ?? ctx.headers?.get('authorization');
   const credential = bearerCredentialFromHeader(header);

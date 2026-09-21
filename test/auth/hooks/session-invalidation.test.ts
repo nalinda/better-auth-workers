@@ -4,7 +4,13 @@ import { describe, expect, it } from 'bun:test';
 import { assertInvalidationInternals } from '../../../src/auth/session-invalidation';
 import { type AuthInstance, createAuth } from '../../../src/index';
 import { sessionCacheKey } from '../../../src/shared/session-cache';
-import { buildEnv, FakeKV, VALID_SECRET } from '../../helpers/auth';
+import {
+  buildEnv,
+  FakeKV,
+  seedBetterAuthSession,
+  signSessionToken,
+  VALID_SECRET,
+} from '../../helpers/auth';
 
 // Better Auth invokes `options.hooks.before` / `options.hooks.after` with the
 // endpoint context the route handler receives: `path`, `body`,
@@ -128,34 +134,12 @@ function authWith(kv: FakeKV, hasBearer = false): AuthInstance {
   return createAuth(buildEnv({ AUTH_KV: kv.asBinding() }), { kv, bearer: hasBearer });
 }
 
-// Better Auth keeps sessions in secondary storage (our KV) under the
-// bare token as `{ session, user }`; seeding one lets the real
-// /sign-out route run end to end against the mock D1, including the
-// bearer plugin's header-to-cookie rewrite that the after hook relies on.
-function seedBetterAuthSession(kv: FakeKV, token: string): void {
-  const now = new Date().toISOString();
-  const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
-  kv.store.set(
-    token,
-    JSON.stringify({
-      session: {
-        id: 'sess-1',
-        token,
-        userId: USER_ID,
-        expiresAt,
-        createdAt: now,
-        updatedAt: now,
-      },
-      user: {
-        id: USER_ID,
-        email: 'user@example.com',
-        name: 'User',
-        emailVerified: false,
-        createdAt: now,
-        updatedAt: now,
-      },
-    })
-  );
+// Seeds the session Better Auth itself reads (secondary storage, i.e. our
+// KV) plus the consumer cache entry the after hook is expected to clear, so
+// the real /sign-out route runs end to end against the mock D1, including
+// the bearer plugin's header-to-cookie rewrite that the after hook relies on.
+function seedSessionAndCache(kv: FakeKV, token: string): void {
+  seedBetterAuthSession(kv, token, USER_ID);
   kv.store.set(sessionCacheKey(token), JSON.stringify({ credentials: [], session: {} }));
 }
 
@@ -252,7 +236,7 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
   describe('sign-out over HTTP, through the real handler', () => {
     it('clears the consumer cache entry when signing out with a bearer token', async () => {
       const kv = new FakeKV();
-      seedBetterAuthSession(kv, TOKEN);
+      seedSessionAndCache(kv, TOKEN);
       const auth = createAuth(buildEnv({ AUTH_KV: kv.asBinding() }), {
         kv,
         bearer: true,
@@ -262,7 +246,10 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
       const res = await auth.handler(
         new Request('https://auth.example.com/api/auth/sign-out', {
           method: 'POST',
-          headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${await signSessionToken(TOKEN)}`,
+          },
           body: '{}',
         })
       );

@@ -36,7 +36,9 @@ export function sessionCookiePairFrom(request: Request, cookieName: string): str
 
 // Better Auth signs cookies as `<token>.<signature>`. The whole signed value
 // is the credential: the bare token is never trusted on its own, since only
-// the auth Worker can check the signature.
+// the auth Worker can check the signature. The bearer plugin is held to the
+// same rule (see auth/plugins/index.ts), so no route anywhere accepts a bare
+// token as a credential.
 export function sessionCredentialFromCookie(
   request: Request,
   cookieName: string
@@ -48,8 +50,9 @@ export function sessionCredentialFromCookie(
   return signed;
 }
 
-// The bearer plugin accepts the bare token or the signed cookie value,
-// which a client may send URL-encoded (its base64 signature carries `=`).
+// The bearer plugin is configured with `requireSignature`, so the credential
+// is the signed cookie value, which a client may send URL-encoded (its
+// base64 signature carries `=`).
 // The credential is normalised to the decoded form, so the same credential
 // is recognised however a client encodes it. This is the one place the
 // `Authorization` header is parsed: the session client and the auth
