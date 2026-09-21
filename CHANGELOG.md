@@ -7,9 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-21
+
 ### Security
 
 - The bearer plugin now requires the signed `set-auth-token` value. A bare session token is no longer accepted as a credential, by the auth Worker or by `createSessionClient`, which ignores an unsigned `Authorization: Bearer` header rather than looking it up or serving it from the session cache. Non-browser clients that were sending the bare `session.token` must echo the `set-auth-token` header value back verbatim instead.
+- The release workflow no longer exposes `NPM_TOKEN` to the install, build or test steps — only the publish steps ever see it.
+
+### Changed
+
+- README corrected to describe how sessions are actually stored (in KV, not the primary database) and the eventual-consistency window (up to ~60 seconds) for revocation to propagate across locations.
+
+### Fixed
+
+- `.gitignore` now covers per-environment `.dev.vars.<env>` files and `.env`/`.env.*`.
 
 ## [0.1.0] - 2026-09-18
 
