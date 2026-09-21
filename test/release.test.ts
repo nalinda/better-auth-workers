@@ -10,6 +10,7 @@ interface Step {
   if?: string;
   uses?: string;
   env?: Record<string, string>;
+  with?: Record<string, unknown>;
   'continue-on-error'?: boolean;
 }
 
@@ -33,6 +34,10 @@ interface Workflow {
     release?: Job;
   };
 }
+
+// What the publish branches are gated on: a boolean output rather than the
+// token itself, so the secret stays out of every step that does not publish.
+const TOKEN_GATE = 'steps.npm-auth.outputs.configured';
 
 function readReleaseWorkflow(): Workflow | undefined {
   const workflowPath = path.resolve(import.meta.dir, '../.github/workflows/release.yml');
@@ -140,7 +145,7 @@ describe('Release workflow', () => {
   it('when NPM_TOKEN is empty, a step emits a notice annotation instead of publishing', () => {
     const workflow = readReleaseWorkflow();
     const steps = workflow?.jobs?.release?.steps ?? [];
-    const skipStep = steps.find((s) => (s.if ?? '').includes("env.NPM_TOKEN == ''"));
+    const skipStep = steps.find((s) => (s.if ?? '').includes(`${TOKEN_GATE} != 'true'`));
     expect(skipStep).toBeDefined();
     const skipLines = (skipStep?.run ?? '').split('\n').map((line) => line.trim());
     expect(skipLines.some((line) => line.startsWith('echo "::notice'))).toBe(true);
@@ -149,24 +154,63 @@ describe('Release workflow', () => {
     const publishStep = steps.find((s) =>
       (s.run ?? '').split('\n').some((line) => line.trimStart().startsWith('npm publish'))
     );
-    expect(publishStep?.if).toContain("env.NPM_TOKEN != ''");
+    expect(publishStep?.if).toContain(`${TOKEN_GATE} == 'true'`);
   });
 
   // GitHub Actions does not expose `secrets` in a step-level `if:`; such a
   // condition fails to evaluate and the whole job errors on the first tag.
-  it('maps NPM_TOKEN to the job env and never reads secrets in a step condition', () => {
+  // One step therefore reduces the secret to a boolean output, and the two
+  // branches gate on that.
+  it('gates the publish branches on a boolean output, never on secrets in a step condition', () => {
     const workflow = readReleaseWorkflow();
-    const job = workflow?.jobs?.release;
-    expect(job?.env?.NPM_TOKEN).toBe('${{ secrets.NPM_TOKEN }}');
-    const gated = (job?.steps ?? []).filter((s) => (s.if ?? '').includes('NPM_TOKEN'));
+    const steps = workflow?.jobs?.release?.steps ?? [];
+    const gateStep = steps.find((s) => s.id === 'npm-auth');
+    expect(gateStep?.env?.NPM_TOKEN).toBe('${{ secrets.NPM_TOKEN }}');
+    expect(gateStep?.run).toContain('GITHUB_OUTPUT');
+
+    const gated = steps.filter((s) => (s.if ?? '').includes('npm-auth'));
     expect(gated.length).toBeGreaterThanOrEqual(2);
     for (const step of gated) {
-      expect(step.if).toMatch(/env\.NPM_TOKEN/);
+      expect(step.if).toContain(TOKEN_GATE);
       expect(step.if).not.toMatch(/secrets\./);
     }
   });
 
-  it('gates npm publish on NPM_TOKEN rather than running unconditionally', () => {
+  // The token was previously mapped at job level, so it sat in the
+  // environment of `bun install` (which runs a `prepare` script), the build
+  // and the test run — none of which publish anything.
+  it('never puts the npm token in the environment of a step that is not publishing', () => {
+    const workflow = readReleaseWorkflow();
+    const job = workflow?.jobs?.release;
+    expect(job?.env?.NPM_TOKEN).toBeUndefined();
+    expect(job?.env?.NODE_AUTH_TOKEN).toBeUndefined();
+
+    const tokenSteps = (job?.steps ?? []).filter((s) =>
+      Object.values(s.env ?? {}).some((value) => value.includes('secrets.NPM_TOKEN'))
+    );
+    expect(tokenSteps.length).toBeGreaterThan(0);
+    for (const step of tokenSteps) {
+      const isGateStep = step.id === 'npm-auth';
+      expect(isGateStep || (step.if ?? '').includes(TOKEN_GATE)).toBe(true);
+    }
+    const names = tokenSteps.map((s) => s.name);
+    expect(names).not.toContain('Build');
+    expect(names).not.toContain('Test');
+  });
+
+  // Nothing in this job pushes, so the checkout token should not be left in
+  // .git/config for every later step to pick up.
+  it('checks out without persisting the checkout credentials', () => {
+    const workflow = readReleaseWorkflow();
+    const steps = workflow?.jobs?.release?.steps ?? [];
+    const checkoutSteps = steps.filter((s) => (s.uses ?? '').startsWith('actions/checkout'));
+    expect(checkoutSteps.length).toBeGreaterThan(0);
+    for (const step of checkoutSteps) {
+      expect(step.with?.['persist-credentials']).toBe(false);
+    }
+  });
+
+  it('gates npm publish on the token rather than running unconditionally', () => {
     const workflow = readReleaseWorkflow();
     const steps = workflow?.jobs?.release?.steps ?? [];
     const publishStep = steps.find((s) =>
@@ -174,7 +218,7 @@ describe('Release workflow', () => {
     );
     expect(publishStep).toBeDefined();
     expect(publishStep?.if).toBeDefined();
-    expect(publishStep?.if).toContain('env.NPM_TOKEN');
+    expect(publishStep?.if).toContain(TOKEN_GATE);
   });
 
   it('includes provenance flag on npm publish', () => {

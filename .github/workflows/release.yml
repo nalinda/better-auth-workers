@@ -28,12 +28,13 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
-    # `secrets` is not available in a step-level `if:`; the token is mapped
-    # to the job env so the publish steps can be gated on `env.NPM_TOKEN`.
-    env:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v7
+        # Nothing in this job pushes back to the repository, so the checkout
+        # credentials are not persisted into .git/config where every later
+        # step (and anything they run) could read them.
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/bun-install
 
       - name: Build
@@ -78,20 +79,35 @@ jobs:
             --title "${GITHUB_REF_NAME}" \
             --notes-file RELEASE_NOTES.md
 
+      # `secrets` is not available in a step-level `if:`, so whether the token
+      # is configured is turned into a plain boolean output here. Only this
+      # step and the publish steps below see the secret itself — the build,
+      # the test run and `bun install` (which runs a `prepare` script) do not.
+      - name: Check whether npm publishing is configured
+        id: npm-auth
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NPM_TOKEN" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Notify npm publish skipped
-        if: ${{ env.NPM_TOKEN == '' }}
+        if: ${{ steps.npm-auth.outputs.configured != 'true' }}
         run: |
           echo "::notice title=Publish skipped::Publishing was skipped pending NPM_TOKEN configuration."
           echo "NPM_TOKEN is not configured. Skipping publish."
 
       - name: Configure npm authentication
-        if: ${{ env.NPM_TOKEN != '' }}
+        if: ${{ steps.npm-auth.outputs.configured == 'true' }}
         env:
-          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
 
       - name: Publish to npm
-        if: ${{ env.NPM_TOKEN != '' }}
+        if: ${{ steps.npm-auth.outputs.configured == 'true' }}
         env:
-          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public
