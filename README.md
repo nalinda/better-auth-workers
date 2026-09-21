@@ -132,7 +132,7 @@ app.on(['GET', 'POST'], '/auth/*', (c) => {
 export default app;
 ```
 
-That is a complete auth Worker. Better Auth's routes are served under `/auth/*`, sessions are stored in Postgres and cached in KV, and OTP codes go wherever your `sendOTP` sends them.
+That is a complete auth Worker. Better Auth's routes are served under `/auth/*`, users and accounts live in Postgres, sessions live in KV, and OTP codes go wherever your `sendOTP` sends them.
 
 On the browser side use Better Auth's own client:
 
@@ -168,7 +168,7 @@ await authClient.phoneNumber.verify({ phoneNumber: '+15555550123', code: '123456
 | `baseURL`        | `string`                                                                                 | `env.AUTH_BASE_URL`      | Public origin used for callbacks and cookies.                                                                                      |
 | `secret`         | `string`                                                                                 | `env.BETTER_AUTH_SECRET` | Signing secret.                                                                                                                    |
 | `database`       | `{ hyperdrive: Hyperdrive, pg } \| { d1: D1Database } \| D1Database`                     | required                 | Primary store; a bare D1 binding is shorthand for `{ d1 }`. See [Storage](#storage).                                               |
-| `kv`             | `KVNamespace`                                                                            | required                 | Secondary storage for session cache and rate limiting.                                                                             |
+| `kv`             | `KVNamespace`                                                                            | required                 | Secondary storage for sessions and rate limiting.                                                                                  |
 | `phone`          | `{ sendOTP, otpLength?, expiresIn?, allowedAttempts?, signUpOnVerification? }`           | off                      | Enables the phone-number plugin. See [Phone OTP](#phone-otp).                                                                      |
 | `google`         | `boolean \| { clientId, clientSecret }`                                                  | off                      | Enables Google sign-in. `true` reads the secrets from `env`.                                                                       |
 | `magicLink`      | `{ sendMagicLink, expiresIn?, disableSignUp? }`                                          | off                      | Enables magic-link sign-in. See [Magic link sign-in](#magic-link-sign-in).                                                         |
@@ -221,7 +221,7 @@ Use Postgres when your application data already lives there and you want foreign
 
 `kv` is required; `createAuth` refuses to start without `options.kv` or `env.AUTH_KV`, even when you supply your own store through `betterAuth.secondaryStorage`, because sign-out invalidation (below) deletes from that namespace. It is wired as Better Auth's secondary storage, which does two things:
 
-- **Session cache.** Session lookups hit KV before the database. With cookie caching enabled — this package's default — most requests never reach the primary store.
+- **Session storage.** Sessions are stored in KV, not cached there: the `session` table in Postgres or D1 is not written and is not the source of truth for session state. A session lookup is a KV read, and with cookie caching enabled — this package's default — most requests do not even need that. Two consequences follow. Sessions survive only as long as their KV entry, and revoking one is subject to KV's eventual consistency (see [Using sessions from another Worker](#using-sessions-from-another-worker)).
 - **Rate limiter storage.** Better Auth's rate limiter is turned on and pointed at KV, so counters are shared across isolates instead of sitting in per-isolate memory. (Left to itself, Better Auth only enables the limiter when `NODE_ENV` is `production`, which a deployed Worker's `process.env` does not carry.) `betterAuth.rateLimit` tunes or disables it.
 
 Sharing across isolates is best-effort, not exact. Counters are written to KV at most once per second per key — KV refuses faster writes — and kept in memory between writes, so a burst from one client never fails a request outright. Each write merges KV's current count with whatever this isolate counted since its last sync, so isolates counting the same client converge on the true total rather than overwriting each other. Because the counter is a KV read-then-write rather than an atomic increment, and KV is only eventually consistent, concurrent requests across isolates or regions can still undercount briefly and let a burst exceed the configured limit.
@@ -382,8 +382,8 @@ app.get(
 How it works:
 
 1. The client forwards the incoming request's `Cookie` (or `Authorization`) header to the auth Worker's `get-session` route over the service binding.
-2. The result is cached in KV keyed by the bare session token for the remaining session lifetime, with the credential exactly as presented (the signed cookie value, or the bearer token) recorded inside the entry; a read is served from the cache only when its credential matches one the entry recorded, so a cookie with a forged signature never hits an entry a genuine request warmed.
-3. Sign-out and session revocation in the auth Worker delete the KV entry, so the API sees the change on the next request.
+2. The result is cached in KV keyed by the bare session token for the remaining session lifetime, with the credential exactly as presented — the signed `<token>.<signature>` value, whether it arrived as a cookie or as a bearer credential — recorded inside the entry; a read is served from the cache only when its credential matches one the entry recorded, so a cookie with a forged signature never hits an entry a genuine request warmed.
+3. Sign-out and session revocation in the auth Worker delete the KV entry — both the cached copy and the session itself, since sessions live in KV — so the API stops seeing the session.
 
 Step 3 covers:
 
@@ -396,6 +396,8 @@ A route that revokes every session of a user lists that user's sessions before t
 
 Sharing the KV namespace between the two Workers is what makes step 3 work. Using separate namespaces still functions, but revocation is only visible after the cache entry expires.
 
+Revocation is not instant either way. KV is eventually consistent: a delete propagates across Cloudflare's points of presence in up to about 60 seconds, so a request reaching a location that still holds the old value can be served with the revoked session until then. The location that handled the revocation sees it immediately; the rest catch up. If you need a session to be unusable everywhere the moment it is revoked, keep a revocation check in a Durable Object and consult it on the requests that matter — the package does not do this for you.
+
 ## Non-browser clients
 
 Enable the bearer plugin:
@@ -404,7 +406,7 @@ Enable the bearer plugin:
 bearer: true;
 ```
 
-Clients then receive the session token in a `set-auth-token` response header after sign-in and send it back as `Authorization: Bearer <token>`. `createSessionClient` accepts either cookies or bearer tokens.
+Clients then receive the session token in a `set-auth-token` response header after sign-in and send it back as `Authorization: Bearer <token>`. Send that header value back exactly as it arrived. It is signed, and only the signed value counts as a credential. The bare `session.token` you can see in a sign-in response body is not one: a request carrying it is treated as having no credential at all. `createSessionClient` accepts either cookies or bearer tokens.
 
 ## Migrations
 

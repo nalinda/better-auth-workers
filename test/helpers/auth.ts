@@ -115,6 +115,48 @@ export function createMockExecutionContext(): MockExecutionContext {
   };
 }
 
+// Better Auth signs the session cookie — and therefore the bearer credential
+// it hands back in `set-auth-token` — as `<token>.<signature>`, where the
+// signature is a padded base64 HMAC-SHA256 of the token under the instance
+// secret (see `signCookieValue` in better-call). Reproduced here rather than
+// imported so the tests do not depend on a transitive package.
+export async function signSessionToken(
+  token: string,
+  secret: string = VALID_SECRET
+): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: { name: 'SHA-256' } },
+    false,
+    ['sign']
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(token));
+  return `${token}.${btoa(String.fromCodePoint(...new Uint8Array(signature)))}`;
+}
+
+// Better Auth keeps sessions in secondary storage (our KV) under the bare
+// token as `{ session, user }`, so seeding one lets a real route run end to
+// end against the mock D1.
+export function seedBetterAuthSession(kv: FakeKV, token: string, userId = 'user-1'): void {
+  const now = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+  kv.store.set(
+    token,
+    JSON.stringify({
+      session: { id: 'sess-1', token, userId, expiresAt, createdAt: now, updatedAt: now },
+      user: {
+        id: userId,
+        email: 'user@example.com',
+        name: 'User',
+        emailVerified: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    })
+  );
+}
+
 export function postJSON(url: string, body: Record<string, unknown>): Request {
   return new Request(url, {
     method: 'POST',

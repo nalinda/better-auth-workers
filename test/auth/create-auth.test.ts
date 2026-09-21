@@ -14,6 +14,8 @@ import {
   createMockExecutionContext,
   FakeKV,
   postJSON,
+  seedBetterAuthSession,
+  signSessionToken,
   VALID_BASE_URL,
   VALID_SECRET,
 } from '../helpers/auth';
@@ -347,6 +349,43 @@ describe('Plugin configuration', () => {
       'first-party',
       'escape-hatch-plugin',
     ]);
+  });
+
+  // Better Auth's bearer plugin signs a bare `Authorization: Bearer <token>`
+  // itself unless `requireSignature` is set, which would make the bare
+  // session token a credential on its own. It is not treated as one
+  // anywhere else in this package — it is the shared KV cache key and it
+  // travels in `/revoke-session` bodies — so the plugin must refuse it.
+  describe('the bearer plugin only accepts a signed credential', () => {
+    const BEARER_TOKEN = 'bearer-session-token';
+
+    async function getSessionWith(credential: string): Promise<unknown> {
+      const kv = new FakeKV();
+      seedBetterAuthSession(kv, BEARER_TOKEN);
+      const auth = createAuth(buildEnv({ AUTH_KV: kv.asBinding() }), {
+        kv,
+        bearer: true,
+        betterAuth: { logger: { disabled: true } },
+      });
+      const res = await auth.handler(
+        new Request('https://auth.example.com/api/auth/get-session', {
+          headers: { authorization: `Bearer ${credential}` },
+        })
+      );
+      expect(res.status).toBe(200);
+      return await res.json();
+    }
+
+    it('resolves the session for the signed token sign-in hands back', async () => {
+      const body = (await getSessionWith(await signSessionToken(BEARER_TOKEN))) as {
+        session?: { token?: string };
+      } | null;
+      expect(body?.session?.token).toBe(BEARER_TOKEN);
+    });
+
+    it('resolves nothing for the bare session token, with no signature', async () => {
+      expect(await getSessionWith(BEARER_TOKEN)).toBeNull();
+    });
   });
 
   it('appends options.plugins after the built-in plugins', () => {

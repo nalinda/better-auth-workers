@@ -36,7 +36,9 @@ export function sessionCookiePairFrom(request: Request, cookieName: string): str
 
 // Better Auth signs cookies as `<token>.<signature>`. The whole signed value
 // is the credential: the bare token is never trusted on its own, since only
-// the auth Worker can check the signature.
+// the auth Worker can check the signature. The bearer plugin is held to the
+// same rule (see auth/plugins/index.ts), so no route anywhere accepts a bare
+// token as a credential.
 export function sessionCredentialFromCookie(
   request: Request,
   cookieName: string
@@ -48,10 +50,15 @@ export function sessionCredentialFromCookie(
   return signed;
 }
 
-// The bearer plugin accepts the bare token or the signed cookie value,
-// which a client may send URL-encoded (its base64 signature carries `=`).
-// The credential is normalised to the decoded form, so the same credential
-// is recognised however a client encodes it. This is the one place the
+// The bearer plugin is configured with `requireSignature`, so the only
+// credential it accepts is the signed `<token>.<signature>` value — the
+// same form the cookie is held to. A dotless header value is the bare
+// session token, which the auth Worker refuses; rejecting it here too means
+// neither caller below can use one as a cache lookup key, so a bare token
+// cannot be served from — or recorded into — an entry. A client may send
+// the signed value URL-encoded (its base64 signature carries `=`); the
+// credential is normalised to the decoded form, so the same credential is
+// recognised however a client encodes it. This is the one place the
 // `Authorization` header is parsed: the session client and the auth
 // Worker's invalidation hook both go through it.
 export function bearerCredentialFromHeader(header: string | null | undefined): string | undefined {
@@ -67,7 +74,11 @@ export function bearerCredentialFromHeader(header: string | null | undefined): s
   if (scheme.toLowerCase() !== 'bearer') return;
   const token = header.slice(spaceIndex + 1).trim();
   if (!token) return;
-  if (!token.includes('%')) return token;
+  const decoded = token.includes('%') ? decodeSafely(token) : token;
+  return decoded && decoded.includes('.') ? decoded : undefined;
+}
+
+function decodeSafely(token: string): string | undefined {
   try {
     return decodeURIComponent(token);
   } catch {
