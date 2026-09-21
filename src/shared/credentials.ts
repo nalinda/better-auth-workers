@@ -50,11 +50,15 @@ export function sessionCredentialFromCookie(
   return signed;
 }
 
-// The bearer plugin is configured with `requireSignature`, so the credential
-// is the signed cookie value, which a client may send URL-encoded (its
-// base64 signature carries `=`).
-// The credential is normalised to the decoded form, so the same credential
-// is recognised however a client encodes it. This is the one place the
+// The bearer plugin is configured with `requireSignature`, so the only
+// credential it accepts is the signed `<token>.<signature>` value — the
+// same form the cookie is held to. A dotless header value is the bare
+// session token, which the auth Worker refuses; rejecting it here too means
+// neither caller below can use one as a cache lookup key, so a bare token
+// cannot be served from — or recorded into — an entry. A client may send
+// the signed value URL-encoded (its base64 signature carries `=`); the
+// credential is normalised to the decoded form, so the same credential is
+// recognised however a client encodes it. This is the one place the
 // `Authorization` header is parsed: the session client and the auth
 // Worker's invalidation hook both go through it.
 export function bearerCredentialFromHeader(header: string | null | undefined): string | undefined {
@@ -70,7 +74,11 @@ export function bearerCredentialFromHeader(header: string | null | undefined): s
   if (scheme.toLowerCase() !== 'bearer') return;
   const token = header.slice(spaceIndex + 1).trim();
   if (!token) return;
-  if (!token.includes('%')) return token;
+  const decoded = token.includes('%') ? decodeSafely(token) : token;
+  return decoded && decoded.includes('.') ? decoded : undefined;
+}
+
+function decodeSafely(token: string): string | undefined {
   try {
     return decodeURIComponent(token);
   } catch {
@@ -78,13 +86,6 @@ export function bearerCredentialFromHeader(header: string | null | undefined): s
   }
 }
 
-// The bearer credential a caller presents, held to the same signed
-// `<token>.<signature>` form as the cookie. A dotless header value is the
-// bare session token, which the auth Worker refuses; rejecting it here too
-// means the session client never uses one as a cache lookup key, so a bare
-// token cannot be served from an entry that happens to have recorded one.
 export function sessionCredentialFromAuthorizationHeader(request: Request): string | undefined {
-  const credential = bearerCredentialFromHeader(request.headers.get('authorization'));
-  if (!credential || !credential.includes('.')) return;
-  return credential;
+  return bearerCredentialFromHeader(request.headers.get('authorization'));
 }

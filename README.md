@@ -382,7 +382,7 @@ app.get(
 How it works:
 
 1. The client forwards the incoming request's `Cookie` (or `Authorization`) header to the auth Worker's `get-session` route over the service binding.
-2. The result is cached in KV keyed by the bare session token for the remaining session lifetime, with the credential exactly as presented (the signed cookie value, or the bearer token) recorded inside the entry; a read is served from the cache only when its credential matches one the entry recorded, so a cookie with a forged signature never hits an entry a genuine request warmed.
+2. The result is cached in KV keyed by the bare session token for the remaining session lifetime, with the credential exactly as presented — the signed `<token>.<signature>` value, whether it arrived as a cookie or as a bearer credential — recorded inside the entry; a read is served from the cache only when its credential matches one the entry recorded, so a cookie with a forged signature never hits an entry a genuine request warmed.
 3. Sign-out and session revocation in the auth Worker delete the KV entry — both the cached copy and the session itself, since sessions live in KV — so the API stops seeing the session.
 
 Step 3 covers:

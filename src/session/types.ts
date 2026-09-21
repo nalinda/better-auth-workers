@@ -21,7 +21,8 @@ export interface SessionData {
 }
 
 // What the session client stores in KV: the session plus the exact
-// credentials (signed cookie value or bearer token) it was verified with.
+// credentials it was verified with — the signed `<token>.<signature>`
+// value, whether it arrived as a cookie or as a bearer credential.
 export interface CachedSessionEntry {
   credentials: string[];
   session: SessionData;

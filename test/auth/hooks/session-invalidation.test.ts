@@ -349,7 +349,6 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
     // Our before hook runs before the bearer plugin's, so the caller is
     // read off the Authorization header directly.
     it.each([
-      ['bare token', TOKEN],
       ['signed token', `${TOKEN}.c2lnbmF0dXJl`],
       ['URL-encoded signed token', encodeURIComponent(`${TOKEN}.c2lnbmF0dXJl=`)],
     ])(
@@ -366,12 +365,23 @@ describe('createAuth wires session cache invalidation into the Better Auth insta
       }
     );
 
+    it('/revoke-sessions over a bare bearer token clears nothing, since the credential is rejected before the caller can be resolved', async () => {
+      const kv = await seededKv(USER_TOKENS);
+      const store = fakeStore();
+      const auth = authWith(kv, true);
+      const ctx = endpointContext(store, '/revoke-sessions', { bearer: TOKEN });
+
+      await dispatch(auth, ctx, () => store.sessions.clear());
+
+      expect(kv.deletes).toHaveLength(0);
+    });
+
     it('/admin/revoke-user-sessions over a bearer token clears the named user’s sessions', async () => {
       const kv = await seededKv(USER_TOKENS);
       const store = fakeStore();
       const auth = authWith(kv, true);
       const ctx = endpointContext(store, '/admin/revoke-user-sessions', {
-        bearer: ADMIN_TOKEN,
+        bearer: `${ADMIN_TOKEN}.c2lnbmF0dXJl`,
         body: { userId: USER_ID },
       });
 
