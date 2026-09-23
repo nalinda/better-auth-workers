@@ -6,6 +6,7 @@ import { Database } from 'bun:sqlite';
 import { describe, expect, it } from 'bun:test';
 
 import { buildPlugins } from '../src/auth/plugins/index';
+import { generatePostgresSql } from '../src/migrations/generate';
 
 interface PackageJson {
   name?: string;
@@ -181,5 +182,86 @@ describe('SQL migrations publishing and schema drift', () => {
       const expectedSql = await generateExpectedSchema('sqlite');
       expect(normalizeSql(committedSql)).toBe(normalizeSql(expectedSql));
     });
+  });
+});
+
+// A table reference in the generated SQL: a quoted name, optionally
+// schema-qualified, after the keyword that introduces it.
+// eslint-disable-next-line security/detect-unsafe-regex -- fixed pattern, run only over the generator's own output
+const TABLE_REFERENCE = /(?:create table|on|references) ("[^"]+"(?:\."[^"]+")?)/g;
+
+async function rejectionOf(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (error) {
+    return error;
+  }
+  throw new Error('expected the promise to reject');
+}
+
+describe('generatePostgresSql', () => {
+  // The shipped Postgres migration is the generator's default output, so a
+  // consumer who generates with no options gets exactly what ships.
+  it('with no options, matches the shipped Postgres migration', async () => {
+    expect(normalizeSql(await generatePostgresSql())).toBe(
+      normalizeSql(readMigrationSql('postgres'))
+    );
+  });
+
+  describe('with a schema and uuid ids', () => {
+    const generated = generatePostgresSql({ schema: 'auth_ba', idType: 'uuid' });
+
+    it('creates the schema before anything in it', async () => {
+      const statements = normalizeSql(await generated).split('\n');
+      expect(statements[0]).toBe('create schema if not exists "auth_ba";');
+    });
+
+    it('creates and references every table only inside the schema', async () => {
+      const sql = await generated;
+      const tableRefs = sql.matchAll(TABLE_REFERENCE).toArray();
+      expect(tableRefs.length).toBeGreaterThan(0);
+      for (const [, ref] of tableRefs) {
+        expect(ref).toMatch(/^"auth_ba"\./);
+      }
+    });
+
+    it('makes every id a uuid with a database default', async () => {
+      const sql = await generated;
+      const ids = sql
+        .matchAll(/"id" ([^,]+?) primary key/g)
+        .map(([, type]) => type)
+        .toArray();
+      expect(ids).toHaveLength(4);
+      for (const type of ids) {
+        expect(type).toBe('uuid default pg_catalog.gen_random_uuid() not null');
+      }
+    });
+
+    it('makes every reference to user.id a uuid', async () => {
+      const sql = await generated;
+      const refs = sql.matchAll(/"userId" (\w+) not null references/g).toArray();
+      expect(refs).toHaveLength(2);
+      for (const [, type] of refs) {
+        expect(type).toBe('uuid');
+      }
+    });
+  });
+
+  it('with only a schema, keeps text ids', async () => {
+    const sql = await generatePostgresSql({ schema: 'auth_ba' });
+    expect(sql).toContain('create table "auth_ba"."user" ("id" text not null primary key');
+    expect(sql).not.toContain('uuid');
+  });
+
+  it('refuses a schema name it could not safely quote', async () => {
+    for (const schema of ['auth"ba', 'Auth', 'auth ba', '']) {
+      const error = await rejectionOf(generatePostgresSql({ schema }));
+      expect(String(error)).toMatch(/schema must be/);
+    }
+  });
+
+  it('refuses an unknown id type', async () => {
+    const error = await rejectionOf(generatePostgresSql({ idType: 'serial' as never }));
+    expect(String(error)).toMatch(/idType must be "text" or "uuid"/);
   });
 });

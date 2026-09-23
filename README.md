@@ -175,12 +175,13 @@ await authClient.phoneNumber.verify({ phoneNumber: '+15555550123', code: '123456
 | `basePath`       | `string`                                                                                 | `'/api/auth'`            | Path prefix the Worker serves Better Auth under.                                                                                   |
 | `baseURL`        | `string`                                                                                 | `env.AUTH_BASE_URL`      | Public origin used for callbacks and cookies.                                                                                      |
 | `secret`         | `string`                                                                                 | `env.BETTER_AUTH_SECRET` | Signing secret.                                                                                                                    |
-| `database`       | `{ hyperdrive: Hyperdrive, pg } \| { d1: D1Database } \| D1Database`                     | required                 | Primary store; a bare D1 binding is shorthand for `{ d1 }`. See [Storage](#storage).                                               |
+| `database`       | `{ hyperdrive: Hyperdrive, pg, schema? } \| { d1: D1Database } \| D1Database`            | required                 | Primary store; a bare D1 binding is shorthand for `{ d1 }`. See [Storage](#storage).                                               |
 | `kv`             | `KVNamespace`                                                                            | required                 | Secondary storage for sessions and rate limiting.                                                                                  |
 | `phone`          | `{ sendOTP, otpLength?, expiresIn?, allowedAttempts?, signUpOnVerification? }`           | off                      | Enables the phone-number plugin. See [Phone OTP](#phone-otp).                                                                      |
 | `google`         | `boolean \| { clientId, clientSecret }`                                                  | off                      | Enables Google sign-in. `true` reads the secrets from `env`.                                                                       |
 | `magicLink`      | `{ sendMagicLink, expiresIn?, disableSignUp? }`                                          | off                      | Enables magic-link sign-in. See [Magic link sign-in](#magic-link-sign-in).                                                         |
 | `bearer`         | `boolean`                                                                                | `false`                  | Enables the bearer plugin for non-browser clients.                                                                                 |
+| `idType`         | `'text' \| 'uuid'`                                                                       | `'text'`                 | How ids are generated. See [Custom schema and UUID ids](#custom-schema-and-uuid-ids).                                              |
 | `allowedMethods` | `Array<'phone' \| 'google' \| 'magic-link'>`                                             | all enabled              | **Deprecated.** Configure only the methods to accept instead. See [Restricting sign-in methods](#restricting-sign-in-methods).     |
 | `plugins`        | `BetterAuthPlugin[]`                                                                     | `[]`                     | Extra Better Auth plugins, appended after the built-in ones (`betterAuth.plugins` is appended the same way, never replacing them). |
 | `betterAuth`     | `Partial<BetterAuthOptions>` (loose for `database`/`plugins`/`secondaryStorage`/`hooks`) | `{}`                     | Escape hatch. Merged last, so it can override anything above.                                                                      |
@@ -208,6 +209,8 @@ database: {
 A `pg` Pool is created per request from `env.HYPERDRIVE.connectionString` with a small `max`, handed to Better Auth, and ended after the response through `waitUntil`. Better Auth talks to it through its bundled Kysely dialect; you never write a query.
 
 Because the pool is per request, so is the instance: the Hyperdrive path is not memoised, and each instance serves exactly one `auth.handler` call. A second `handler` call on the same instance is refused with an error rather than running against the released pool — call `createAuth(env, options)` again for each request. The pool is only released by `handler`; a Worker that calls `auth.api.*` directly on a Hyperdrive instance owns the pool it created (`auth.options.database`) and must `end()` it itself.
+
+To keep the auth tables out of `public` (for example when `public` is exposed through PostgREST), set `schema`. See [Custom schema and UUID ids](#custom-schema-and-uuid-ids).
 
 The Worker imports `pg` and passes it in because Workers are bundled — the bundler only includes modules it sees imported, so the package can't load the driver on your behalf without forcing it on D1 deployments too. Hyperdrive keeps the real connections warm on Cloudflare's side, so these per-request pools stay cheap.
 
@@ -442,7 +445,7 @@ For local development against `wrangler dev`:
 wrangler d1 migrations apply <db> --local
 ```
 
-For Postgres, copy the file into your migration tool's directory and record the package version in a comment so upgrades are traceable.
+For Postgres, copy the file into your migration tool's directory and record the package version in a comment so upgrades are traceable. If you set `database.schema` or `idType`, generate the SQL instead (see below).
 
 If you add plugins through `plugins`, their tables are not in the shipped SQL. Generate them with Better Auth's CLI against your config:
 
@@ -450,20 +453,32 @@ If you add plugins through `plugins`, their tables are not in the shipped SQL. G
 npx @better-auth/cli generate --config src/auth.config.ts
 ```
 
-The shipped SQL uses Better Auth's default ids: random 32-character strings in `text` columns. To use UUIDs instead, pick the setting by database:
+### Custom schema and UUID ids
 
-- **D1**: `betterAuth: { advanced: { database: { generateId: 'uuid' } } }` works with the shipped SQL. Better Auth generates each UUID itself and stores it in the `text` column.
-- **Postgres**: do not use `generateId: 'uuid'` with the shipped SQL. On Postgres, that setting makes Better Auth leave `id` out of the insert and rely on a database default. The shipped `id` columns have no default, so the first sign-up fails with a not-null violation. Either have Better Auth generate the UUID itself, which works with the shipped `text` columns:
+On Postgres, two options change the schema, and the SQL has to match them:
 
-  ```ts
-  createAuth(env, {
-    betterAuth: { advanced: { database: { generateId: () => crypto.randomUUID() } } },
-  });
-  ```
+```ts
+createAuth(env, {
+  database: { hyperdrive: env.HYPERDRIVE, pg, schema: 'auth_ba' },
+  idType: 'uuid',
+  // ...
+});
+```
 
-  or add your own migration giving `user`, `session`, `account` and `verification` an `id` default of `gen_random_uuid()`, and optionally converting `id` and the `userId` foreign keys to `uuid`.
+- **`database.schema`** puts the tables in their own Postgres schema. Better Auth qualifies every query with it (`"auth_ba"."user"`), so nothing depends on the connection's `search_path`. The name must be a lower-case identifier: letters, digits and underscores.
+- **`idType: 'uuid'`** makes every id a UUID. On Postgres the id columns are `uuid` with a `gen_random_uuid()` default, and the database generates each id. The `userId` columns that reference `user.id` are `uuid` too, so your own tables can reference users with a `uuid` foreign key. Rows you insert yourself, for example existing users migrated with the ids your tables already hold, can carry any UUID.
 
-Existing rows keep the ids they were created with.
+Generate the SQL for those options with the package's CLI, and apply it like the shipped migration:
+
+```sh
+bunx better-auth-workers sql --schema auth_ba --id-type uuid > migrations/0001_auth.sql
+```
+
+The output comes from Better Auth's own migration generator, for the same plugins as the shipped SQL. With no options it prints exactly the shipped `migrations/postgres/0001_init.sql`.
+
+On D1 there are no schemas, so `database.schema` is rejected. `idType: 'uuid'` works with the shipped SQLite migration as is: Better Auth generates each UUID itself and stores it in the `text` id column.
+
+Changing `idType` on an existing database changes how new ids are made, not the ones already stored. On Postgres, moving from `text` to `uuid` also means migrating the columns yourself.
 
 Schema changes in this package are always a major version bump.
 

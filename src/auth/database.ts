@@ -1,3 +1,5 @@
+import { PostgresDialect } from 'kysely';
+
 import type { AuthEnv, ConfigValue } from '../types';
 import { loadPgPoolClass, type PgPool, type PgPoolConstructor } from './postgres-pool';
 import type {
@@ -14,6 +16,38 @@ export type ResolvedDatabase = PgPool | D1Database | ConfigValue;
 interface BuildDatabaseResult {
   database: ResolvedDatabase;
   pool?: PgPool;
+}
+
+// A Postgres schema name as the generator and Better Auth's `schemaName`
+// accept it: an unquoted lower-case identifier, within Postgres's 63-byte
+// limit, so the same name works quoted in the SQL and in every query.
+const SCHEMA_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
+
+export function schemaNameProblem(schema: string, label = 'database.schema'): string | undefined {
+  if (SCHEMA_NAME.test(schema)) return;
+  return `${label} must be a lower-case Postgres identifier (letters, digits and underscores, starting with a letter or underscore, at most 63 characters), got ${JSON.stringify(schema)}`;
+}
+
+// With a schema, Better Auth is handed its dialect form rather than the bare
+// pool, since only that form carries `schemaName`; `transaction: true`
+// matches what it infers for a bare pool. `end` keeps the documented
+// contract that a Worker calling `auth.api.*` directly releases the pool
+// through `auth.options.database.end()`.
+function withSchema(pool: PgPool, schema: string): ResolvedDatabase {
+  return {
+    dialect: new PostgresDialect({ pool: pool as never }),
+    type: 'postgres',
+    schemaName: schema,
+    transaction: true,
+    end: () => pool.end(),
+  };
+}
+
+function getDatabaseSchema(options?: CreateAuthOptions): string | undefined {
+  const database = options?.database;
+  if (database && typeof database === 'object' && 'schema' in database) {
+    return database.schema;
+  }
 }
 
 function getHyperdriveOption(
@@ -93,7 +127,8 @@ export function resolveDatabase(
         connectionString,
         max: 5,
       });
-      return { database: pool, pool };
+      const schema = getDatabaseSchema(options);
+      return { database: schema === undefined ? pool : withSchema(pool, schema), pool };
     }
   }
 
@@ -110,6 +145,9 @@ export function resolveDatabase(
 const DATABASE_MISSING_MESSAGE =
   'database is required: specify options.database.hyperdrive or options.database.d1 (or provide HYPERDRIVE or DB on env)';
 
+const SCHEMA_WITHOUT_POSTGRES_MESSAGE =
+  'database.schema is only supported with Postgres through Hyperdrive; D1 has no schemas';
+
 const PG_DRIVER_MISSING_MESSAGE =
   "database.pg is required with Hyperdrive: import pg from 'pg' and pass database: { hyperdrive, pg } (a bundled Worker only includes modules it imports itself)";
 
@@ -122,10 +160,13 @@ export function databaseProblem(
   options?: CreateAuthOptions,
   envObj?: Partial<AuthEnv>
 ): string | undefined {
+  const schema = getDatabaseSchema(options);
   if (resolveHyperdriveConnectionString(options, envObj) !== undefined) {
-    return resolvePgPoolClass(options) ? undefined : PG_DRIVER_MISSING_MESSAGE;
+    if (!resolvePgPoolClass(options)) return PG_DRIVER_MISSING_MESSAGE;
+    return schema === undefined ? undefined : schemaNameProblem(schema);
   }
   const hasDatabase =
     resolveD1Binding(options, envObj) !== undefined || Boolean(options?.betterAuth?.database);
-  return hasDatabase ? undefined : DATABASE_MISSING_MESSAGE;
+  if (!hasDatabase) return DATABASE_MISSING_MESSAGE;
+  return schema === undefined ? undefined : SCHEMA_WITHOUT_POSTGRES_MESSAGE;
 }
