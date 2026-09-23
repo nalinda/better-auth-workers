@@ -10,7 +10,8 @@
     "noEmit": true,
     "paths": {
       "better-auth-workers": ["../../src/index.ts"],
-      "better-auth-workers/client": ["../../src/client.ts"]
+      "better-auth-workers/client": ["../../src/client.ts"],
+      "better-auth-workers/admin": ["../../src/admin.ts"]
     }
   },
   "include": ["src/**/*.ts"]

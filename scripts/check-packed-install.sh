@@ -46,6 +46,12 @@ if (typeof root.createAuth !== 'function') throw new Error('createAuth is not ex
 if (typeof client.createSessionClient !== 'function') {
   throw new Error('createSessionClient is not exported from better-auth-workers/client');
 }
+// The admin entry imports cloudflare:workers, which only exists in workerd,
+// so it is checked for presence rather than imported.
+const adminEntry = manifest.exports?.['./admin']?.import;
+if (typeof adminEntry !== 'string' || !(await Bun.file(`node_modules/better-auth-workers/${adminEntry}`).exists())) {
+  throw new Error('better-auth-workers/admin is missing from the tarball');
+}
 for (const dir of ['migrations/postgres', 'migrations/sqlite']) {
   const glob = new Bun.Glob('*.sql');
   const files = [...glob.scanSync(`node_modules/better-auth-workers/${dir}`)];
