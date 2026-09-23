@@ -1,6 +1,6 @@
 {
   "name": "better-auth-workers",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Better Auth on Cloudflare Workers",
   "type": "module",
   "license": "MIT",
