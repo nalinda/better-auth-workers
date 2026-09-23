@@ -65,6 +65,8 @@ Until the package is on npm, install the tarball attached to a [GitHub release](
 bun add https://github.com/nalinda/better-auth-workers/releases/download/v0.4.0/better-auth-workers-0.4.0.tgz
 ```
 
+Installing from a git URL does not work: `dist/` is built at release time and not committed.
+
 The package's type declarations reference the Workers runtime globals (`KVNamespace`, `D1Database`, `Hyperdrive`) through `@cloudflare/workers-types`, so it has to be installed for them to resolve, even in a project that generates its own binding types with `wrangler types`.
 
 Postgres deployments also need the driver:

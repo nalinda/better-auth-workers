@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `prepare` no longer fails when the package is installed from git: it exits before running husky when the package directory is not a git checkout.
+- `prepare` exits before running husky when the package directory is not a git checkout, instead of failing on devDependencies that are not installed there. Installing from a git URL is still not supported, since `dist/` is not committed; use the release tarball.
 
 ## [0.3.0] - 2026-09-23
 
