@@ -422,10 +422,12 @@ Better Auth's admin routes need an admin's browser session. A backend Worker wit
 
 ```ts
 // auth Worker
-import { createAuth } from 'better-auth-workers';
+import { createAuth, type CreateAuthOptions } from 'better-auth-workers';
 import { createAuthAdmin } from 'better-auth-workers/admin';
 
-const authOptions = (env: Env) => ({/* the same options you pass to createAuth */});
+const authOptions = (env: Env): CreateAuthOptions => ({
+  /* the same options you pass to createAuth */
+});
 
 app.on(['GET', 'POST'], '/auth/*', (c) =>
   createAuth(c.env, authOptions(c.env)).handler(c.req.raw, c.executionCtx)
