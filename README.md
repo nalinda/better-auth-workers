@@ -438,6 +438,21 @@ If you add plugins through `plugins`, their tables are not in the shipped SQL. G
 npx @better-auth/cli generate --config src/auth.config.ts
 ```
 
+The shipped SQL uses Better Auth's default ids: random 32-character strings in `text` columns. To use UUIDs instead, pick the setting by database:
+
+- **D1**: `betterAuth: { advanced: { database: { generateId: 'uuid' } } }` works with the shipped SQL. Better Auth generates each UUID itself and stores it in the `text` column.
+- **Postgres**: do not use `generateId: 'uuid'` with the shipped SQL. On Postgres, that setting makes Better Auth leave `id` out of the insert and rely on a database default. The shipped `id` columns have no default, so the first sign-up fails with a not-null violation. Either have Better Auth generate the UUID itself, which works with the shipped `text` columns:
+
+  ```ts
+  createAuth(env, {
+    betterAuth: { advanced: { database: { generateId: () => crypto.randomUUID() } } },
+  });
+  ```
+
+  or add your own migration giving `user`, `session`, `account` and `verification` an `id` default of `gen_random_uuid()`, and optionally converting `id` and the `userId` foreign keys to `uuid`.
+
+Existing rows keep the ids they were created with.
+
 Schema changes in this package are always a major version bump.
 
 ## Routing
