@@ -90,6 +90,28 @@ async function signInWithPhone(server: DevServer, phoneNumber: string): Promise<
   return postJson(server, '/auth/phone-number/verify', { phoneNumber, code });
 }
 
+// Like requestOtp, but for a number that has had codes before: waits for a
+// code logged after this request, not the first one in the output.
+async function requestFreshOtp(server: DevServer, phoneNumber: string): Promise<string> {
+  const codesFor = () =>
+    server
+      .output()
+      .matchAll(/OTP for (\+\d+): (\d{4,8})/g)
+      .filter((match) => match[1] === phoneNumber)
+      .map((match) => match[2])
+      .toArray();
+  const before = codesFor().length;
+  const sent = await postJson(server, '/auth/phone-number/send-otp', { phoneNumber });
+  expect(sent.status).toBe(200);
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const codes = codesFor();
+    if (codes.length > before) return codes.at(-1) ?? '';
+    await Bun.sleep(100);
+  }
+  throw new Error(`no new OTP logged for ${phoneNumber}`);
+}
+
 async function getSession(
   server: DevServer,
   headers: Record<string, string>
@@ -391,6 +413,48 @@ describe.each(backends)('example Worker under wrangler dev (%s)', (backend: Back
       headers: asClient({ authorization }),
     });
     expect(afterRevoke.status).toBe(401);
+  });
+
+  // Another Worker bound to the auth Worker's AuthAdmin entrypoint (here the
+  // gateway) bans over RPC: the session ends everywhere at once, including
+  // the API Worker's cached copy, and the user cannot sign back in.
+  it('AuthAdmin over a service binding bans and unbans a user', async () => {
+    const phoneNumber = nextPhone();
+    const verified = await signInWithPhone(server, phoneNumber);
+    const cookie = sessionCookieFrom(verified);
+    const { user }: { user: { id: string } } = await verified.json();
+    const meStatus = async () => {
+      const res = await fetch(`${server.baseUrl}/me`, {
+        headers: asClient({ cookie: cookie ?? '' }),
+      });
+      return res.status;
+    };
+    expect(await meStatus()).toBe(200);
+
+    const banned = await fetch(`${server.baseUrl}/__gateway/ban`, {
+      method: 'POST',
+      body: JSON.stringify({ userId: user.id }),
+    });
+    const banResult: unknown = await banned.json();
+    expect(banResult).toEqual({ found: true, revokedSessions: 1 });
+    expect(await meStatus()).toBe(401);
+
+    const code = await requestFreshOtp(server, phoneNumber);
+    const refused = await postJson(server, '/auth/phone-number/verify', { phoneNumber, code });
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({ code: 'BANNED_USER' });
+
+    const unbanned = await fetch(`${server.baseUrl}/__gateway/unban`, {
+      method: 'POST',
+      body: JSON.stringify({ userId: user.id }),
+    });
+    const unbanResult: unknown = await unbanned.json();
+    expect(unbanResult).toEqual({ found: true });
+    const again = await postJson(server, '/auth/phone-number/verify', {
+      phoneNumber,
+      code: await requestFreshOtp(server, phoneNumber),
+    });
+    expect(again.status).toBe(200);
   });
 
   it('rate limiting is on by default: a sixth magic-link request from one client in a window is refused', async () => {

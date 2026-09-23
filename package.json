@@ -26,6 +26,11 @@
       "types": "./dist/client.d.ts",
       "import": "./dist/client.js",
       "default": "./dist/client.js"
+    },
+    "./admin": {
+      "types": "./dist/admin.d.ts",
+      "import": "./dist/admin.js",
+      "default": "./dist/admin.js"
     }
   },
   "bin": {
@@ -36,7 +41,7 @@
     "migrations"
   ],
   "scripts": {
-    "build": "bun build src/index.ts src/client.ts --outdir dist --packages external && bun build src/cli.ts --outdir dist --target node --packages external && tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && bun build src/index.ts src/client.ts src/admin.ts --outdir dist --packages external --splitting --external cloudflare:workers && bun build src/cli.ts --outdir dist --target node --packages external && tsc -p tsconfig.build.json",
     "lint": "eslint . --cache --cache-location .eslintcache --cache-strategy content",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

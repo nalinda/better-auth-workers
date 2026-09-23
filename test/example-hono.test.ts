@@ -6,6 +6,19 @@ import { describe, expect, it, mock } from 'bun:test';
 
 import { parseJsonc } from './helpers/jsonc';
 
+// The example exports an AuthAdmin RPC entrypoint, and `cloudflare:workers`
+// only exists in workerd; this stands in for its WorkerEntrypoint.
+void mock.module('cloudflare:workers', () => ({
+  WorkerEntrypoint: class {
+    ctx: unknown;
+    env: unknown;
+    constructor(ctx: unknown, env: unknown) {
+      this.ctx = ctx;
+      this.env = env;
+    }
+  },
+}));
+
 interface PackageJson {
   name?: string;
   type?: string;

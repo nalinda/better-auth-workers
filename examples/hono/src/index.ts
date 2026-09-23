@@ -1,18 +1,19 @@
-import { type AuthEnv, createAuth } from 'better-auth-workers';
+import { type AuthEnv, createAuth, type CreateAuthOptions } from 'better-auth-workers';
+import { createAuthAdmin } from 'better-auth-workers/admin';
 import { Hono } from 'hono';
 import pg from 'pg';
 
 type Env = AuthEnv;
 
-const app = new Hono<{ Bindings: Env }>();
-
-app.on(['GET', 'POST'], '/auth/*', (c) => {
-  const hasGoogle = Boolean(c.env.GOOGLE_CLIENT_ID && c.env.GOOGLE_CLIENT_SECRET);
-  const auth = createAuth(c.env, {
+// One set of options for every way into the auth instance: the HTTP routes
+// below and the AuthAdmin RPC entrypoint.
+function authOptions(env: Env): CreateAuthOptions {
+  const hasGoogle = Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
+  return {
     basePath: '/auth',
     // The Worker imports the pg driver itself so the bundler includes it.
-    database: c.env.HYPERDRIVE ? { hyperdrive: c.env.HYPERDRIVE, pg } : { d1: c.env.DB },
-    kv: c.env.AUTH_KV,
+    database: env.HYPERDRIVE ? { hyperdrive: env.HYPERDRIVE, pg } : { d1: env.DB },
+    kv: env.AUTH_KV,
     phone: {
       sendOTP: ({ phoneNumber, code }) => {
         // [local use only - not for production]
@@ -29,7 +30,13 @@ app.on(['GET', 'POST'], '/auth/*', (c) => {
     },
     google: hasGoogle ? true : undefined,
     bearer: true,
-  });
+  };
+}
+
+const app = new Hono<{ Bindings: Env }>();
+
+app.on(['GET', 'POST'], '/auth/*', (c) => {
+  const auth = createAuth(c.env, authOptions(c.env));
 
   // The request's ExecutionContext goes with every call: the instance may
   // be memoised (D1 only; Hyperdrive rebuilds it per request), so delivery
@@ -37,5 +44,10 @@ app.on(['GET', 'POST'], '/auth/*', (c) => {
   // request's context, not the one that built it.
   return auth.handler(c.req.raw, c.executionCtx);
 });
+
+// Ban and unban over RPC, for Workers bound to this entrypoint
+// (`entrypoint: 'AuthAdmin'` in their service binding). Nothing reaches it
+// over HTTP.
+export const AuthAdmin = createAuthAdmin(authOptions);
 
 export default app;

@@ -57,6 +57,7 @@ describe('package.json#exports', () => {
     expect(pkg.files).toContain('dist');
     expect(Object.keys(pkg.exports).toSorted((a, b) => a.localeCompare(b))).toEqual([
       '.',
+      './admin',
       './client',
     ]);
     for (const target of Object.values(pkg.exports)) {
@@ -80,6 +81,41 @@ describe('Entry points export documented functions', () => {
     const client = await loadExport('./client');
     expect(typeof client.createSessionClient).toBe('function');
     expect(typeof client.requireSession).toBe('function');
+  });
+
+  // The admin entry imports `cloudflare:workers`, which only resolves inside
+  // workerd, so it is checked as built rather than imported here.
+  it('builds the ./admin entry point with createAuthAdmin, leaving cloudflare:workers external', () => {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- path from package.json
+    const code = fs.readFileSync(distFile(exportTarget('./admin').import), 'utf8');
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- path from package.json
+    const declarations = fs.readFileSync(distFile(exportTarget('./admin').types), 'utf8');
+    expect(code).toMatch(/from ["']cloudflare:workers["']/);
+    expect(code).toContain('createAuthAdmin');
+    for (const name of ['createAuthAdmin', 'AuthAdminRpc', 'BanUserOptions', 'BanUserResult']) {
+      expect(declarations).toContain(name);
+    }
+  });
+
+  // One copy of the package's code across entry points: an auth Worker that
+  // imports both `.` and `./admin` must share one createAuth, with one
+  // instance cache, not bundle two.
+  it('shares one chunk of package code between . and ./admin', () => {
+    const chunksImportedBy = (subpath: string): string[] => {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- path from package.json
+      const code = fs.readFileSync(distFile(exportTarget(subpath).import), 'utf8');
+      return code
+        .matchAll(/from ["']\.\/([^"']+\.js)["']/g)
+        .map(([, file]) => file)
+        .toArray();
+    };
+    const shared = chunksImportedBy('./admin').filter((chunk) =>
+      chunksImportedBy('.').includes(chunk)
+    );
+    expect(shared.length).toBeGreaterThan(0);
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- path from package.json
+    const admin = fs.readFileSync(distFile(exportTarget('./admin').import), 'utf8');
+    expect(admin).not.toContain('instanceCache');
   });
 
   it('declares the CreateAuth*Options types in the . declaration file', () => {

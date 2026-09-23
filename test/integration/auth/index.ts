@@ -2,6 +2,10 @@ import type { AuthEnv } from 'better-auth-workers';
 
 import app from '../../../examples/hono/src/index';
 
+// The example's RPC entrypoint, exported from this wrapper too so the
+// gateway's `entrypoint: 'AuthAdmin'` binding reaches it.
+export { AuthAdmin } from '../../../examples/hono/src/index';
+
 // Test-only entry for the example auth Worker. It serves the example's own
 // Hono app with the example's own bindings, and only adds observation: the
 // D1 and KV bindings are wrapped so the suite can count how many primary

@@ -7,12 +7,18 @@
     "d1": {
       "services": [
         { "binding": "AUTH", "service": "example-hono-d1" },
+        { "binding": "AUTH_ADMIN", "service": "example-hono-d1", "entrypoint": "AuthAdmin" },
         { "binding": "API", "service": "example-hono-api-d1" },
       ],
     },
     "hyperdrive": {
       "services": [
         { "binding": "AUTH", "service": "example-hono-hyperdrive" },
+        {
+          "binding": "AUTH_ADMIN",
+          "service": "example-hono-hyperdrive",
+          "entrypoint": "AuthAdmin",
+        },
         { "binding": "API", "service": "example-hono-api-hyperdrive" },
       ],
     },

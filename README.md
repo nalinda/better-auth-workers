@@ -18,6 +18,7 @@ It is a thin layer. Better Auth's options, plugins and clients are all still you
 - [Magic link sign-in](#magic-link-sign-in)
 - [Restricting sign-in methods](#restricting-sign-in-methods)
 - [Using sessions from another Worker](#using-sessions-from-another-worker)
+- [Banning users from another Worker](#banning-users-from-another-worker)
 - [Non-browser clients](#non-browser-clients)
 - [Migrations](#migrations)
 - [Routing](#routing)
@@ -414,6 +415,49 @@ A route that revokes every session of a user lists that user's sessions before t
 Sharing the KV namespace between the two Workers is what makes step 3 work. Using separate namespaces still functions, but revocation is only visible after the cache entry expires.
 
 Revocation is not instant either way. KV is eventually consistent: a delete propagates across Cloudflare's points of presence in up to about 60 seconds, so a request reaching a location that still holds the old value can be served with the revoked session until then. The location that handled the revocation sees it immediately; the rest catch up. If you need a session to be unusable everywhere the moment it is revoked, keep a revocation check in a Durable Object and consult it on the requests that matter — the package does not do this for you.
+
+## Banning users from another Worker
+
+Better Auth's admin routes need an admin's browser session. A backend Worker with no such session, such as an API Worker enforcing a moderation decision, can ban and unban users over a service binding instead, through an RPC entrypoint the auth Worker exports:
+
+```ts
+// auth Worker
+import { createAuth, type CreateAuthOptions } from 'better-auth-workers';
+import { createAuthAdmin } from 'better-auth-workers/admin';
+
+const authOptions = (env: Env): CreateAuthOptions => ({
+  /* the same options you pass to createAuth */
+});
+
+app.on(['GET', 'POST'], '/auth/*', (c) =>
+  createAuth(c.env, authOptions(c.env)).handler(c.req.raw, c.executionCtx)
+);
+
+export const AuthAdmin = createAuthAdmin(authOptions);
+export default app;
+```
+
+Bind the calling Worker to that entrypoint, and only that Worker:
+
+```jsonc
+// the API Worker's wrangler.jsonc
+"services": [{ "binding": "AUTH_ADMIN", "service": "auth", "entrypoint": "AuthAdmin" }]
+```
+
+```ts
+import type { AuthAdminRpc } from 'better-auth-workers/client';
+
+interface Env {
+  AUTH_ADMIN: AuthAdminRpc;
+}
+
+await env.AUTH_ADMIN.banUser(userId, { reason: 'abuse', expiresIn: 7 * 24 * 3600 }); // { found, revokedSessions }
+await env.AUTH_ADMIN.unbanUser(userId); // { found }
+```
+
+`banUser` does what the admin plugin's ban does: it sets `banned`, `banReason` (default `'No reason'`) and `banExpires` (permanent without `expiresIn`, in seconds), and revokes every session the user has. It also deletes each of those sessions from the session client's KV cache, so `requireSession` in any Worker sharing the namespace refuses the user on their next request. Other Cloudflare locations can take up to about 60 seconds to see a KV delete; to close that gap, re-check `banned` on each request against the source of truth (your database, or the auth Worker), not on `session.user` in a `requireSession` predicate, which comes from the same cache. A banned user who tries to sign in gets `BANNED_USER`. `unbanUser` clears all three fields. Both return `found: false` and change nothing for an unknown id.
+
+The binding is the authorisation. There's no HTTP route and no shared secret, so only Workers you bind to the `AuthAdmin` entrypoint can call it. A gateway Worker that forwards `/auth/*` should bind the auth Worker's default entrypoint only. On the Hyperdrive path each call opens and releases its own pool.
 
 ## Non-browser clients
 
