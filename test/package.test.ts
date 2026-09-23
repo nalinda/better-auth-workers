@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { describe, expect, it } from 'bun:test';
@@ -57,6 +58,23 @@ function readWorkflows(): string {
     .join('\n');
 }
 
+function runPrepareIn(setup: (dir: string) => void): number {
+  const prepare = readPackageJson()?.scripts?.prepare;
+  expect(prepare).toBeDefined();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prepare-'));
+  try {
+    setup(dir);
+    // A PATH without node_modules/.bin, so `husky` is not found if reached.
+    const result = Bun.spawnSync(['sh', '-c', prepare ?? ''], {
+      cwd: dir,
+      env: { PATH: '/usr/bin:/bin' },
+    });
+    return result.exitCode;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 describe('Package scaffolding and metadata', () => {
   it('package.json exists with package name and module type', () => {
     const pkg = readPackageJson();
@@ -110,6 +128,24 @@ describe('Package scaffolding and metadata', () => {
       expect(pkg?.scripts?.[script]).toBeDefined();
     });
   }
+
+  // Installed as a dependency the package directory is not a git checkout
+  // and none of its devDependencies (husky, the lint config) exist, so
+  // `prepare` must exit cleanly before reaching them.
+  it('prepare exits cleanly outside a git checkout', () => {
+    expect(runPrepareIn(() => {})).toBe(0);
+  });
+
+  // In a git worktree `.git` is a file, not a directory; the guard must
+  // still treat it as a checkout and go on to run husky, which is not on the
+  // stripped PATH, so reaching it is the shell's command-not-found (127).
+  it('prepare still runs husky inside a checkout, including a worktree', () => {
+    const exitCode = runPrepareIn((dir) => {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- test-owned temp directory
+      fs.writeFileSync(path.join(dir, '.git'), 'gitdir: /elsewhere\n');
+    });
+    expect(exitCode).toBe(127);
+  });
 
   it('tsconfig.json enables strict mode', () => {
     const tsconfig = readTsConfig();

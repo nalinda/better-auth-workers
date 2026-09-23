@@ -8,12 +8,29 @@ name: Release
 #      token scoped to the package with read and write permissions).
 #   2. Add it as a repository secret named NPM_TOKEN in GitHub
 #      (Settings → Secrets and variables → Actions → New repository secret).
-#   3. If the package has not yet been published to npm, run the initial
-#      publish manually once from an authenticated machine (`npm login`,
-#      then `npm publish --access public`). Subsequent releases are
-#      published automatically by this workflow.
+#   3. Set the secret before pushing the tag: the workflow then does the
+#      first publish too. To publish an already-released version by hand
+#      instead, publish the tarball attached to its GitHub release, never a
+#      local build, so npm and the release asset serve the same bytes:
+#      download `better-auth-workers-X.Y.Z.tgz` from the release, then run
+#      `npm publish better-auth-workers-X.Y.Z.tgz --access public` from an
+#      authenticated machine (`npm login`).
 #   4. Provenance (`npm publish --provenance`) uses GitHub Actions OIDC via
 #      `permissions: id-token: write` below and needs no additional secrets.
+#
+# The release is drafted with the packed tarball attached. Consumers install
+# it from the asset's download URL, which only resolves once a maintainer
+# publishes the draft.
+#
+# Three jobs, so that nothing unlocked runs next to the release credentials:
+# `build` packs the tarball from the locked install, `check-tarball` installs
+# it into a fresh consumer project (which resolves better-auth's dependencies
+# from the registry, unlocked) with read-only permissions, and `release` —
+# the only job that can write releases or mint an OIDC token — runs no
+# dependency code at all and refuses a tarball whose checksum changed. No
+# job restores or saves any cache (neither dependencies nor the bun binary
+# setup-bun caches by default), so nothing a job that ran unlocked code
+# wrote can reach what is built and shipped.
 
 on:
   push:
@@ -21,21 +38,37 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 jobs:
-  release:
-    name: Release
+  build:
+    name: Build and pack
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tarball: ${{ steps.pack.outputs.tarball }}
+      sha256: ${{ steps.pack.outputs.sha256 }}
     steps:
       - uses: actions/checkout@v7
-        # Nothing in this job pushes back to the repository, so the checkout
-        # credentials are not persisted into .git/config where every later
-        # step (and anything they run) could read them.
+        # Nothing in this workflow pushes back to the repository, so the
+        # checkout credentials are not persisted into .git/config where every
+        # later step (and anything they run) could read them.
         with:
           persist-credentials: false
-      - uses: ./.github/actions/bun-install
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+          # setup-bun caches the bun binary by default, and a restored
+          # binary is only checked by `bun --revision`; see the header.
+          no-cache: true
+
+      # Deliberately uncached: a restored node_modules is trusted as is by a
+      # frozen install, so a cache written by any job that ran unlocked code
+      # could change what gets built and shipped. A fresh install checks
+      # every package against the lockfile's integrity hashes.
+      - name: Install dependencies (uncached)
+        run: bun install --frozen-lockfile
 
       - name: Build
         run: bun run build
@@ -53,6 +86,79 @@ jobs:
             echo "::error title=Version mismatch::tag ${GITHUB_REF_NAME} is version ${TAG_VERSION}, but package.json is ${PKG_VERSION}"
             exit 1
           fi
+
+      # The exact bytes every channel ships: attached to the GitHub release
+      # (consumers pin its download URL) and, when configured, published to
+      # npm. `--ignore-scripts` because `prepare` already ran during install.
+      # The checksum lets the release job refuse a tarball that changed after
+      # this point.
+      - name: Pack
+        id: pack
+        run: |
+          TARBALL="$(npm pack --ignore-scripts --silent)"
+          echo "tarball=${TARBALL}" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "$TARBALL" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package-tarball
+          path: ${{ steps.pack.outputs.tarball }}
+          if-no-files-found: error
+
+  check-tarball:
+    name: Check the packed tarball installs and imports
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+          # setup-bun caches the bun binary by default, and a restored
+          # binary is only checked by `bun --revision`; see the header.
+          no-cache: true
+
+      # The locked install supplies the better-auth version the check pins.
+      # Uncached, like every job here, so the unlocked install below cannot
+      # write into a cache a later build restores.
+      - name: Install dependencies (uncached)
+        run: bun install --frozen-lockfile
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: package-tarball
+
+      - name: Check the packed tarball installs and imports
+        env:
+          TARBALL: ${{ needs.build.outputs.tarball }}
+        run: scripts/check-packed-install.sh "$TARBALL"
+
+  release:
+    name: Release
+    needs: [build, check-tarball]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      # Only for CHANGELOG.md. No dependencies are installed in this job.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: package-tarball
+
+      - name: Verify the tarball is the one that was packed and checked
+        env:
+          TARBALL: ${{ needs.build.outputs.tarball }}
+          EXPECTED_SHA256: ${{ needs.build.outputs.sha256 }}
+        run: echo "${EXPECTED_SHA256}  ${TARBALL}" | sha256sum --check --strict
 
       - name: Generate release notes
         id: release-notes
@@ -73,11 +179,13 @@ jobs:
       - name: Draft GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARBALL: ${{ needs.build.outputs.tarball }}
         run: |
           gh release create "${GITHUB_REF_NAME}" \
             --draft \
             --title "${GITHUB_REF_NAME}" \
-            --notes-file RELEASE_NOTES.md
+            --notes-file RELEASE_NOTES.md \
+            "$TARBALL"
 
       # `secrets` is not available in a step-level `if:`, so whether the token
       # is configured is turned into a plain boolean output here. Only this
@@ -110,4 +218,5 @@ jobs:
         if: ${{ steps.npm-auth.outputs.configured == 'true' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
+          TARBALL: ${{ needs.build.outputs.tarball }}
+        run: npm publish "$TARBALL" --provenance --access public

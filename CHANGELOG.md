@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Each GitHub release carries the packed tarball as an asset, so the package can be installed at an exact version (`bun add https://github.com/nalinda/better-auth-workers/releases/download/vX.Y.Z/better-auth-workers-X.Y.Z.tgz`) before it is on npm. The release workflow checks that the tarball installs into a fresh Bun project and imports, and publishes that same tarball to npm when `NPM_TOKEN` is set. CI runs the same install check on every pull request.
+
+### Fixed
+
+- `prepare` exits before running husky when the package directory is not a git checkout, instead of failing on devDependencies that are not installed there. Installing from a git URL is still not supported, since `dist/` is not committed; use the release tarball.
+
 ## [0.3.0] - 2026-09-23
 
 ### Deprecated
