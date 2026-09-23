@@ -3,6 +3,7 @@ import { admin, bearer } from 'better-auth/plugins';
 
 import type { ContextRef } from '../../shared/non-blocking';
 import { buildDisallowedMethodStubs } from '../disallowed-method-stubs';
+import { buildTestModePlugin } from '../test-mode';
 import type { CreateAuthOptions } from '../types';
 import { buildMagicLinkPlugin } from './magic-link';
 import { buildPhonePlugin } from './phone';
@@ -14,7 +15,7 @@ export function buildPlugins(
   ctxRef: ContextRef
 ): BetterAuthPlugin[] {
   const plugins: BetterAuthPlugin[] = [admin()];
-  const phonePlugin = buildPhonePlugin(options?.phone, ctxRef);
+  const phonePlugin = buildPhonePlugin(options?.phone, ctxRef, options?.testMode?.otpCode);
   if (phonePlugin) plugins.push(phonePlugin);
   const magicLinkPlugin = buildMagicLinkPlugin(options?.magicLink, ctxRef);
   if (magicLinkPlugin) plugins.push(magicLinkPlugin);
@@ -28,6 +29,8 @@ export function buildPlugins(
   // matches on the full credential — so the plugin is held to the signed
   // `<token>.<signature>` form that sign-in hands back in `set-auth-token`.
   if (options?.bearer) plugins.push(bearer({ requireSignature: true }));
+  const testModePlugin = buildTestModePlugin(options);
+  if (testModePlugin) plugins.push(testModePlugin);
   if (options?.plugins) plugins.push(...options.plugins);
   // `betterAuth.plugins` is appended the same way, so the escape hatch adds
   // plugins rather than replacing the ones the package relies on.

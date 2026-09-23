@@ -22,7 +22,9 @@ import {
 } from './types';
 
 // Service bindings ignore the host; it only needs to be a valid absolute URL.
-const SERVICE_BINDING_ORIGIN = 'https://auth.internal';
+// A `.localhost` name, so an auth Worker in test mode (which refuses calls
+// naming any other host) still answers its own session client.
+const SERVICE_BINDING_ORIGIN = 'https://auth.localhost';
 
 async function readCachedEntry(kv: KVStore, key: string): Promise<CachedSessionEntry | null> {
   try {

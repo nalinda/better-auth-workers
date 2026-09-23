@@ -3,6 +3,7 @@ import { databaseProblem } from './database';
 import { resolveBaseURL, resolveSecret } from './env';
 import { kvProblem } from './kv';
 import { googleCredentialProblems } from './plugins/google';
+import { testModeProblems } from './test-mode';
 import type { CreateAuthOptions } from './types';
 
 function collectConfigProblems(options?: CreateAuthOptions, env?: Partial<AuthEnv>): string[] {
@@ -18,7 +19,7 @@ function collectConfigProblems(options?: CreateAuthOptions, env?: Partial<AuthEn
   if (dbProblem) problems.push(dbProblem);
   const kvMissing = kvProblem(options, env);
   if (kvMissing) problems.push(kvMissing);
-  problems.push(...googleCredentialProblems(options, env));
+  problems.push(...googleCredentialProblems(options, env), ...testModeProblems(options, env));
   const idType: unknown = options?.idType;
   if (idType !== undefined && idType !== 'text' && idType !== 'uuid') {
     problems.push(`idType must be "text" or "uuid", got ${JSON.stringify(idType)}`);

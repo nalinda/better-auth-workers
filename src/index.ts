@@ -6,6 +6,7 @@ export type {
   CreateAuthMagicLinkOptions,
   CreateAuthOptions,
   CreateAuthPhoneOptions,
+  CreateAuthTestModeOptions,
   HyperdriveDatabaseOption,
   PgDriver,
 } from './auth/types';

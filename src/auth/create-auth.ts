@@ -24,6 +24,7 @@ import { buildPlugins, buildSocialProviders } from './plugins';
 import { withPoolLifecycle } from './postgres-pool';
 import { buildSecondaryStorage } from './secondary-storage';
 import { buildSessionInvalidationHook, buildSessionTokenCollector } from './session-invalidation';
+import { warnIfTestMode } from './test-mode';
 import type { CreateAuthHook, CreateAuthHooks, CreateAuthOptions } from './types';
 import { validateConfig } from './validate';
 
@@ -244,6 +245,7 @@ export function createAuth<O extends CreateAuthOptions = CreateAuthOptions>(
   }
 
   validateConfig(options, env);
+  warnIfTestMode(options);
 
   const ctxRef: ContextRef = { current: options?.ctx };
   const { database, pool } = resolveDatabase(options, env) ?? {};

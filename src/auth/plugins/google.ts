@@ -8,7 +8,8 @@ export function buildSocialProviders(
   env?: Partial<AuthEnv>
 ): SocialProviders | undefined {
   const googleOpts = options?.google;
-  if (!googleOpts) return;
+  // Test mode's stub takes Google's place (see test-mode.ts).
+  if (!googleOpts || options.testMode?.google) return;
 
   if (googleOpts === true) {
     const clientId = typeof env?.GOOGLE_CLIENT_ID === 'string' ? env.GOOGLE_CLIENT_ID : undefined;
@@ -25,7 +26,7 @@ export function googleCredentialProblems(
   options?: CreateAuthOptions,
   env?: Partial<AuthEnv>
 ): string[] {
-  if (options?.google !== true) return [];
+  if (options?.google !== true || options.testMode?.google) return [];
   const problems: string[] = [];
   if (typeof env?.GOOGLE_CLIENT_ID !== 'string') {
     problems.push('google: true requires env.GOOGLE_CLIENT_ID to be set');

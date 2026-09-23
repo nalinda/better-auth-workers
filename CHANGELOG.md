@@ -9,11 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `testMode: { otpCode?, google? }` for end-to-end tests: every phone verification accepts `otpCode` and nothing is sent, and Google sign-in goes through an in-process stub that signs in the identity named by `loginHint` (or answers like a refused consent screen for `error:<code>`). `createAuth` refuses it unless every base URL is `http://` on a loopback host, and while it is on the instance refuses every call naming another host: HTTP requests by their URL, and server-side `auth.api` calls that forward headers by their `host` and `x-forwarded-host` (refused when they name none).
 - Each GitHub release carries the packed tarball as an asset, so the package can be installed at an exact version (`bun add https://github.com/nalinda/better-auth-workers/releases/download/vX.Y.Z/better-auth-workers-X.Y.Z.tgz`) before it is on npm. The release workflow checks that the tarball installs into a fresh Bun project and imports, and publishes that same tarball to npm when `NPM_TOKEN` is set. CI runs the same install check on every pull request.
 - `database.schema` (Postgres through Hyperdrive): puts the auth tables in their own Postgres schema. Every query is qualified with it through Better Auth's `schemaName`, without relying on `search_path`. D1 rejects it.
 - `idType: 'uuid'`: UUID ids. On Postgres the database generates them (`uuid` columns with a `gen_random_uuid()` default, and `uuid` `userId` references); on D1 Better Auth generates them and stores them as text.
 - `better-auth-workers sql [--schema <name>] [--id-type text|uuid]`: a CLI that prints the Postgres SQL for those options, compiled by Better Auth's own migration generator. With no options it prints the shipped migration.
 - `kysely` is now a dependency, matching the range `better-auth` itself depends on, for the Postgres dialect that carries the schema.
+
+### Changed
+
+- `createSessionClient` now sends its requests to the auth Worker as `https://auth.localhost/...` instead of `https://auth.internal/...`. Service bindings ignore the host, so nothing changes for most setups, and a test-mode auth Worker now answers them. If you allow-listed `auth.internal` (a dynamic `betterAuth.baseURL` with `allowedHosts`) or route on that host in a gateway Worker, switch to `auth.localhost`.
 
 ### Fixed
 
