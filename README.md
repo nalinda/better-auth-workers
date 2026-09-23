@@ -539,6 +539,17 @@ The auth Worker should be same-origin with the app that sets its cookies. Two wa
 
 Cross-origin deployments work with Better Auth's `trustedOrigins` and cross-subdomain cookie settings, passed through `betterAuth`, but same-origin is simpler and is the tested path.
 
+### Same origin behind a proxy
+
+A common layout: the browser only ever talks to the app's origin (`https://app.example.com`), the app Worker forwards `/auth/*` over a service binding, perhaps through a gateway Worker, and the last hop reaches the auth Worker. `test/proxy-path.test.ts` tests the auth Worker receiving the forwarded request, and the `wrangler dev` suite forwards over a real service binding. What it takes:
+
+- **Base URL and path.** Set `AUTH_BASE_URL` (or `baseURL`) to the app's origin and `basePath` to the path you forward, e.g. `https://app.example.com` and `/auth`. The base URL is fixed, so the auth Worker never derives it from the request, and no `X-Forwarded-Host` handling is needed.
+- **Forward the request as it is**, at every hop: `env.AUTH.fetch(request)`. A service binding keeps the URL and headers, which carry the cookie, the `Origin` header the CSRF check reads, and `cf-connecting-ip`, which the rate limiter keys on. A hop that builds a new request from the URL alone drops those headers, and every user then shares one rate-limit bucket.
+- **Cookies** are host-only for the app origin: no `Domain`, `Path=/`, `Secure`, `HttpOnly`, `SameSite=Lax`. The browser sends them to every path on that origin, so the API behind the same origin sees them too.
+- **CSRF.** Better Auth trusts the base URL's origin (plus any `trustedOrigins`). A request carrying cookies from another origin is refused with `403 INVALID_ORIGIN`, and a `callbackURL` on another origin with `403 INVALID_CALLBACK_URL`. Add other origins to `betterAuth.trustedOrigins` only if you mean to accept them. The phone endpoints check the origin only on requests that carry cookies (magic link also checks it on a first sign-in, and every `callbackURL` is checked). A cross-site first phone sign-in carries no cookies; what stops it is that those endpoints only take JSON, which a cross-site form can't send and a cross-site `fetch` can only send after a CORS preflight the auth Worker doesn't answer. So don't add CORS headers that let other origins reach `/auth/*`.
+- **Google** redirects back to `https://app.example.com/auth/callback/google`; register exactly that URI in the Google console.
+- **The API Worker** reads the same session from its own forwarded request: `createSessionClient({ auth: env.AUTH, kv: env.AUTH_KV, basePath: '/auth' }).get(request)`.
+
 ## Local development
 
 `wrangler dev` runs the Worker locally with local bindings.
