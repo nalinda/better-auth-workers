@@ -8,10 +8,13 @@ name: Release
 #      token scoped to the package with read and write permissions).
 #   2. Add it as a repository secret named NPM_TOKEN in GitHub
 #      (Settings → Secrets and variables → Actions → New repository secret).
-#   3. If the package has not yet been published to npm, run the initial
-#      publish manually once from an authenticated machine (`npm login`,
-#      then `npm publish --access public`). Subsequent releases are
-#      published automatically by this workflow.
+#   3. Set the secret before pushing the tag: the workflow then does the
+#      first publish too. To publish an already-released version by hand
+#      instead, publish the tarball attached to its GitHub release, never a
+#      local build, so npm and the release asset serve the same bytes:
+#      download `better-auth-workers-X.Y.Z.tgz` from the release, then run
+#      `npm publish better-auth-workers-X.Y.Z.tgz --access public` from an
+#      authenticated machine (`npm login`).
 #   4. Provenance (`npm publish --provenance`) uses GitHub Actions OIDC via
 #      `permissions: id-token: write` below and needs no additional secrets.
 #
