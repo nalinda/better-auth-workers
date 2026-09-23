@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-23
+
+### Deprecated
+
+- `allowedMethods`, to be removed in the next major version. Every sign-in method is already opt-in per `createAuth` call, so configure only the methods a Worker should accept. The option still works and now logs a deprecation warning once per isolate. It only restricts the routes this package mounts, so a plugin such as Better Auth's `oauthPopup` or `oneTap` can still start Google sign-in when `google` is configured but not listed.
+
+### Changed
+
+- The Hono example no longer sets `allowedMethods`; it configures only the methods it accepts.
+- README documents using UUID ids: `generateId: 'uuid'` works on D1 with the shipped SQL, but on Postgres it needs `generateId: () => crypto.randomUUID()` or a migration adding an `id` default.
+
 ## [0.2.0] - 2026-09-21
 
 ### Security
