@@ -78,20 +78,34 @@ function logRedacted(error: unknown, code: string): void {
 // `awaitDelivery`: the response waits for `sendOTP`, and a failure becomes
 // the response. Better Auth stored the code as a new verification row before
 // `sendOTP` ran; it was never delivered, so that row is deleted rather than
-// left to be guessed. Only that row, by id: a newer row from a racing resend
-// is on its way to the user, and an older row from an earlier send (the
-// user's previous, still valid code) becomes the current one again. The
-// delete is best-effort, so a database error can't replace the delivery
-// error the client needs. A refusal the consumer raised on purpose
-// (OTPDeliveryError) is not logged; anything else is, with the code redacted.
+// left to be guessed. Only rows holding this code are deleted, wherever they
+// sit: a newer row from a racing resend is on its way to the user, and an
+// older row from an earlier send (the user's previous, still valid code)
+// becomes the current one again. The stored value is `<code>:<attempts>`.
+// When a consumer keeps codes out of the database (their own secondary
+// storage with `storeInDatabase: false`), each number holds one code, and it
+// is removed if it is still this one. The delete is best-effort, so a
+// database error can't replace the delivery error the client needs. A
+// refusal the consumer raised on purpose (OTPDeliveryError) is not logged;
+// anything else is, with the code redacted.
 async function deleteUndeliveredCode(ctx: SendOTPContext, data: SendOTPData): Promise<void> {
   if (!ctx) return;
-  // The newest row for the number; the stored value is `<code>:<attempts>`.
-  const stored = await ctx.context.internalAdapter.findVerificationValue(data.phoneNumber);
-  if (!stored?.value.startsWith(`${data.code}:`)) return;
-  await ctx.context.adapter.delete({
+  const { internalAdapter, adapter, options } = ctx.context;
+  // Resolves the identifier as stored (hashed, if `storeIdentifier` says so).
+  const stored = await internalAdapter.findVerificationValue(data.phoneNumber);
+  if (!stored) return;
+  if (options.verification?.storeInDatabase === false) {
+    if (stored.value.startsWith(`${data.code}:`)) {
+      await internalAdapter.deleteVerificationByIdentifier(data.phoneNumber);
+    }
+    return;
+  }
+  await adapter.deleteMany({
     model: 'verification',
-    where: [{ field: 'id', value: stored.id }],
+    where: [
+      { field: 'identifier', value: stored.identifier },
+      { field: 'value', operator: 'starts_with', value: `${data.code}:` },
+    ],
   });
 }
 

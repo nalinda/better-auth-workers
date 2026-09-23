@@ -212,6 +212,35 @@ describe('phone.awaitDelivery', () => {
     expect(verified.status).toBe(200);
   });
 
+  // Two failed resends whose failures land out of order: the earlier one's
+  // row is no longer the newest when its cleanup runs, but must go too.
+  it('deletes a failed resend that is no longer the newest code', async () => {
+    const gates = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    const codes: string[] = [];
+    const sendOTP: CreateAuthPhoneOptions['sendOTP'] = async ({ code }) => {
+      codes.push(code);
+      if (codes.length < 2) return;
+      await gates[codes.length - 2]?.promise;
+      throw new Error('gateway down');
+    };
+    const auth = awaitedAuth(sendOTP);
+    await sendOtp(auth);
+
+    const second = sendOtp(auth);
+    await Bun.sleep(20);
+    const third = sendOtp(auth);
+    await Bun.sleep(20);
+    gates[0]?.resolve();
+    await second;
+    gates[1]?.resolve();
+    await third;
+
+    const withUndelivered = await verify(auth, codes[1] ?? '');
+    expect(withUndelivered.status).toBe(400);
+    const withDelivered = await verify(auth, codes[0] ?? '');
+    expect(withDelivered.status).toBe(200);
+  });
+
   it('still answers 502 OTP_DELIVERY_FAILED when deleting the undelivered code fails', async () => {
     const db = migratedSqlite();
     const sendOTP: CreateAuthPhoneOptions['sendOTP'] = () => {
