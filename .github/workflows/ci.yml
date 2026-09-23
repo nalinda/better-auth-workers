@@ -55,6 +55,11 @@ jobs:
       - name: Build (dist)
         run: bun run build
 
+      # What a consumer pinning a release asset gets: the packed tarball,
+      # installed into a fresh Bun project, with every entry point imported.
+      - name: Check the packed tarball installs and imports
+        run: scripts/check-packed-install.sh
+
   format-and-audit:
     name: Format & Knip
     runs-on: ubuntu-latest

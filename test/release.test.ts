@@ -221,6 +221,41 @@ describe('Release workflow', () => {
     expect(publishStep?.if).toContain(TOKEN_GATE);
   });
 
+  // Consumers pin the tarball attached to the GitHub release, so the release
+  // must carry the same bytes npm would serve, checked before anything ships.
+  it('packs once, checks the tarball installs, and attaches it to the release draft', () => {
+    const workflow = readReleaseWorkflow();
+    const steps = workflow?.jobs?.release?.steps ?? [];
+    const packIndex = steps.findIndex((s) => s.id === 'pack');
+    const packStep = steps.at(packIndex);
+    expect(packStep?.run).toContain('npm pack --ignore-scripts');
+    expect(packStep?.run).toContain('GITHUB_OUTPUT');
+
+    const checkIndex = steps.findIndex((s) =>
+      (s.run ?? '').includes('scripts/check-packed-install.sh')
+    );
+    const draftIndex = steps.findIndex((s) => (s.run ?? '').includes('gh release create'));
+    expect(packIndex).toBeGreaterThan(-1);
+    expect(checkIndex).toBeGreaterThan(packIndex);
+    expect(draftIndex).toBeGreaterThan(checkIndex);
+
+    const packed = '${{ steps.pack.outputs.tarball }}';
+    expect(steps.at(checkIndex)?.env?.TARBALL).toBe(packed);
+    const draftStep = steps.at(draftIndex);
+    expect(draftStep?.env?.TARBALL).toBe(packed);
+    expect(draftStep?.run).toContain('"$TARBALL"');
+  });
+
+  it('publishes to npm the same tarball it attached to the release', () => {
+    const workflow = readReleaseWorkflow();
+    const steps = workflow?.jobs?.release?.steps ?? [];
+    const publishStep = steps.find((s) =>
+      (s.run ?? '').split('\n').some((line) => line.trimStart().startsWith('npm publish'))
+    );
+    expect(publishStep?.env?.TARBALL).toBe('${{ steps.pack.outputs.tarball }}');
+    expect(publishStep?.run).toContain('npm publish "$TARBALL"');
+  });
+
   it('includes provenance flag on npm publish', () => {
     const workflow = readReleaseWorkflow();
     const steps = workflow?.jobs?.release?.steps ?? [];

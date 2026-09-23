@@ -41,7 +41,7 @@
     "test": "bun test",
     "test:integration": "bun test test/integration/wrangler-dev.test.ts",
     "knip": "knip",
-    "prepare": "husky && bun node_modules/@serendibyte-co/eslint-config/hooks/fix-hooks-path.sh"
+    "prepare": "test -e .git || exit 0; husky && bun node_modules/@serendibyte-co/eslint-config/hooks/fix-hooks-path.sh"
   },
   "peerDependencies": {
     "@cloudflare/workers-types": ">=4.0.0",

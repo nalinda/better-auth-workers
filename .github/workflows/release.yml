@@ -54,6 +54,20 @@ jobs:
             exit 1
           fi
 
+      # The exact bytes every channel ships: attached to the GitHub release
+      # (consumers pin its download URL) and, when configured, published to
+      # npm. `--ignore-scripts` because `prepare` already ran during install.
+      - name: Pack
+        id: pack
+        run: |
+          TARBALL="$(npm pack --ignore-scripts --silent)"
+          echo "tarball=${TARBALL}" >> "$GITHUB_OUTPUT"
+
+      - name: Check the packed tarball installs and imports
+        env:
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: scripts/check-packed-install.sh "$TARBALL"
+
       - name: Generate release notes
         id: release-notes
         run: |
@@ -73,11 +87,13 @@ jobs:
       - name: Draft GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARBALL: ${{ steps.pack.outputs.tarball }}
         run: |
           gh release create "${GITHUB_REF_NAME}" \
             --draft \
             --title "${GITHUB_REF_NAME}" \
-            --notes-file RELEASE_NOTES.md
+            --notes-file RELEASE_NOTES.md \
+            "$TARBALL"
 
       # `secrets` is not available in a step-level `if:`, so whether the token
       # is configured is turned into a plain boolean output here. Only this
@@ -110,4 +126,5 @@ jobs:
         if: ${{ steps.npm-auth.outputs.configured == 'true' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: npm publish "$TARBALL" --provenance --access public

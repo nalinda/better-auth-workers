@@ -20,6 +20,7 @@ import type { CreateAuthOptions } from './types';
 export function buildDisallowedMethodStubs(
   options?: CreateAuthOptions
 ): BetterAuthPlugin | undefined {
+  // eslint-disable-next-line sonarjs/deprecation -- the deprecated option's own implementation
   const allowed = options?.allowedMethods;
   if (!allowed) return;
   const endpoints: NonNullable<BetterAuthPlugin['endpoints']> = {};

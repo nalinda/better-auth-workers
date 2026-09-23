@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { describe, expect, it } from 'bun:test';
@@ -110,6 +111,24 @@ describe('Package scaffolding and metadata', () => {
       expect(pkg?.scripts?.[script]).toBeDefined();
     });
   }
+
+  // Installed as a dependency the package directory is not a git checkout
+  // and none of its devDependencies (husky, the lint config) exist, so
+  // `prepare` must exit cleanly before reaching them.
+  it('prepare exits cleanly outside a git checkout', () => {
+    const prepare = readPackageJson()?.scripts?.prepare;
+    expect(prepare).toBeDefined();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prepare-'));
+    try {
+      const result = Bun.spawnSync(['sh', '-c', prepare ?? ''], {
+        cwd: dir,
+        env: { PATH: '/usr/bin:/bin' },
+      });
+      expect(result.exitCode).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
   it('tsconfig.json enables strict mode', () => {
     const tsconfig = readTsConfig();
