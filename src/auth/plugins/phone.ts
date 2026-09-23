@@ -76,22 +76,23 @@ function logRedacted(error: unknown, code: string): void {
 }
 
 // `awaitDelivery`: the response waits for `sendOTP`, and a failure becomes
-// the response. Better Auth stored the code (replacing any earlier one for
-// the number) before `sendOTP` ran; it was never delivered, so it is
-// deleted rather than left to be guessed. The delete is best-effort: KV
-// accepts one write per second per key and has just been written, and a
-// refused delete must not replace the delivery error the client needs. A
-// refusal the consumer raised on purpose (OTPDeliveryError) is not logged;
-// anything else is, with the code redacted.
-// The stored value is `<code>:<attempts>`. A resend that raced this one may
-// already have replaced it with a newer code, which is on its way to the
-// user and must not be deleted along with this undelivered one.
-async function deleteIfStillStored(ctx: SendOTPContext, data: SendOTPData): Promise<void> {
-  const adapter = ctx?.context.internalAdapter;
-  if (!adapter) return;
-  const stored = await adapter.findVerificationValue(data.phoneNumber);
+// the response. Better Auth stored the code as a new verification row before
+// `sendOTP` ran; it was never delivered, so that row is deleted rather than
+// left to be guessed. Only that row, by id: a newer row from a racing resend
+// is on its way to the user, and an older row from an earlier send (the
+// user's previous, still valid code) becomes the current one again. The
+// delete is best-effort, so a database error can't replace the delivery
+// error the client needs. A refusal the consumer raised on purpose
+// (OTPDeliveryError) is not logged; anything else is, with the code redacted.
+async function deleteUndeliveredCode(ctx: SendOTPContext, data: SendOTPData): Promise<void> {
+  if (!ctx) return;
+  // The newest row for the number; the stored value is `<code>:<attempts>`.
+  const stored = await ctx.context.internalAdapter.findVerificationValue(data.phoneNumber);
   if (!stored?.value.startsWith(`${data.code}:`)) return;
-  await adapter.deleteVerificationByIdentifier(data.phoneNumber);
+  await ctx.context.adapter.delete({
+    model: 'verification',
+    where: [{ field: 'id', value: stored.id }],
+  });
 }
 
 async function deliverAwaited(
@@ -103,7 +104,7 @@ async function deliverAwaited(
     await send();
   } catch (error) {
     try {
-      await deleteIfStillStored(ctx, data);
+      await deleteUndeliveredCode(ctx, data);
     } catch (cleanupError) {
       logRedacted(cleanupError, data.code);
     }

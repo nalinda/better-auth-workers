@@ -290,10 +290,10 @@ Service-binding calls stay inside Cloudflare's network and never traverse the pu
 By default `send-otp` answers `200` before `sendOTP` has run, so the user can't be told a code didn't go out. Set `awaitDelivery: true` to wait for `sendOTP` and report what happened:
 
 - If `sendOTP` resolves, the response is the usual `200`.
-- If it throws, the response is `502` with `code: 'OTP_DELIVERY_FAILED'`, and the error is logged with the code redacted. The undelivered code is deleted so it can't be verified, unless a resend has already replaced it with a newer code, which is left alone.
+- If it throws, the response is `502` with `code: 'OTP_DELIVERY_FAILED'`, and the error is logged with the code redacted. The undelivered code is deleted so it can't be verified; a newer code from a resend is left alone.
 - If it throws an `OTPDeliveryError`, the response carries that error's own code, message and status instead, plus `retryAfter` (whole seconds, in the body and as a `Retry-After` header) when you give one. Nothing is logged: it's a refusal you chose.
 
-Better Auth stores the new code before `sendOTP` runs, replacing any earlier code for that number. So a failure in `sendOTP` also means the user's previous code, if they had one, no longer works. Refusals you can decide on before sending, such as a per-number limit, belong in `beforeSendOTP` instead (below).
+Better Auth stores the new code before `sendOTP` runs, and only the newest code for a number is accepted. When the new one fails to go out, it's deleted, so the user's previous code, if it hasn't expired, works again. Refusals you can decide on before sending, such as a per-number limit, belong in `beforeSendOTP` instead (below).
 
 `awaitDelivery` can't be combined with `betterAuth.advanced.backgroundTasks`: Better Auth then runs `sendOTP` as a background task, so `createAuth` refuses the combination. With `awaitDelivery` the response takes as long as delivery does, so keep `sendOTP` fast.
 
@@ -626,7 +626,7 @@ Schema changes in this package are always a major version bump.
 
 ## Error codes
 
-Every error response from the auth Worker's routes is JSON with a stable `code` to translate in the UI, and a `message` that is only for logs. An unexpected failure is a `500` with `code: 'INTERNAL_ERROR'` (or one of Better Auth's own `FAILED_TO_*` codes, such as `FAILED_TO_GET_SESSION`); treat any 5xx as "try again". Only a request that matches no auth route (a wrong `basePath`, an unknown path, or the wrong HTTP method) gets Better Auth's empty `404`. (`requireSession` in your other Workers answers `401`, `403` and `503` in plain text; see [Requiring a verified phone for Google users](#requiring-a-verified-phone-for-google-users) for returning your own code.)
+Every error response from the auth Worker's routes is JSON with a stable `code` to translate in the UI, and a `message` that is only for logs. An unexpected failure is a `500` with `code: 'INTERNAL_ERROR'` (or one of Better Auth's own `FAILED_TO_*` codes, such as `FAILED_TO_GET_SESSION`); treat any 5xx as "try again". With `betterAuth.onAPIError.throw` set, such errors are thrown to your code instead. Only a request that matches no auth route (a wrong `basePath`, an unknown path, or the wrong HTTP method) gets Better Auth's empty `404`. (`requireSession` in your other Workers answers `401`, `403` and `503` in plain text; see [Requiring a verified phone for Google users](#requiring-a-verified-phone-for-google-users) for returning your own code.)
 
 | Situation                                        | Status | `code`                                           | Where                                                                            |
 | ------------------------------------------------ | ------ | ------------------------------------------------ | -------------------------------------------------------------------------------- |

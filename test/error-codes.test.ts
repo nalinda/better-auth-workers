@@ -198,6 +198,33 @@ describe('documented error codes', () => {
     }
   });
 
+  it('leaves unexpected errors thrown when betterAuth.onAPIError.throw is set', async () => {
+    class FailingKV extends FakeKV {
+      override get(): Promise<string | null> {
+        return Promise.reject(new Error('KV GET failed: 500'));
+      }
+    }
+    const auth = createAuth(buildEnv({ DB: undefined, AUTH_KV: new FailingKV().asBinding() }), {
+      phone: { sendOTP: () => {} },
+      betterAuth: { database: migratedSqlite(), onAPIError: { throw: true } },
+    });
+
+    let error: unknown;
+    try {
+      await auth.handler(
+        new Request(`${API}/phone-number/send-otp`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.9' },
+          body: JSON.stringify({ phoneNumber: PHONE }),
+        })
+      );
+    } catch (thrown) {
+      error = thrown;
+    }
+
+    expect(String(error)).toContain('KV GET failed');
+  });
+
   it('PROVIDER_NOT_FOUND (404): Google sign-in when Google is not configured', async () => {
     const { auth } = setup();
     const res = await post(auth, '/sign-in/social', { provider: 'google', callbackURL: '/' });

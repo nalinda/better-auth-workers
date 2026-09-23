@@ -1,5 +1,6 @@
 import type { HandlerHost } from '../shared/handler-host';
 import type { WaitUntilContext } from '../types';
+import type { CreateAuthOptions } from './types';
 
 const RATE_LIMITED = 'RATE_LIMITED';
 const INTERNAL_ERROR = 'INTERNAL_ERROR';
@@ -53,13 +54,17 @@ async function withInternalErrorCode(response: Response): Promise<Response> {
   return internalError(response.status, response);
 }
 
-export function withErrorCodes(instance: HandlerHost): void {
+// A consumer who set `betterAuth.onAPIError.throw` wants unexpected errors
+// thrown to their own handling (an error tracker, say), so those still are.
+export function withErrorCodes(instance: HandlerHost, options?: CreateAuthOptions): void {
   const originalHandler = instance.handler.bind(instance);
+  const shouldRethrow = options?.betterAuth?.onAPIError?.throw === true;
   instance.handler = async (request: Request, ctx?: WaitUntilContext) => {
     let response: Response;
     try {
       response = await originalHandler(request, ctx);
     } catch (error) {
+      if (shouldRethrow) throw error;
       console.error('better-auth-workers: unhandled error in the auth handler', error);
       return internalError();
     }

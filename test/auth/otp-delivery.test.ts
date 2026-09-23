@@ -35,14 +35,6 @@ function awaitedAuth(
   });
 }
 
-// A KV namespace whose deletes are refused, as KV does for a second write
-// to one key within a second.
-class DeleteRefusingKV extends FakeKV {
-  override delete(): Promise<void> {
-    return Promise.reject(new Error('KV DELETE failed: 429 Too Many Requests'));
-  }
-}
-
 const sendOtp = (auth: ReturnType<typeof createAuth>) =>
   auth.handler(postJSON(`${API}/phone-number/send-otp`, { phoneNumber: PHONE }));
 
@@ -220,15 +212,42 @@ describe('phone.awaitDelivery', () => {
     expect(verified.status).toBe(200);
   });
 
-  it('still answers 502 OTP_DELIVERY_FAILED when deleting the undelivered code is refused', async () => {
-    const { sendOTP } = recordingSendOTP(() => {
+  it('still answers 502 OTP_DELIVERY_FAILED when deleting the undelivered code fails', async () => {
+    const db = migratedSqlite();
+    const sendOTP: CreateAuthPhoneOptions['sendOTP'] = () => {
+      // From here on the database refuses to delete verification rows.
+      db.run(
+        "create trigger no_delete before delete on verification begin select raise(fail, 'delete refused'); end"
+      );
       throw new Error('gateway down');
+    };
+    const auth = createAuth(buildEnv({ DB: undefined, AUTH_KV: new FakeKV().asBinding() }), {
+      phone: { sendOTP, awaitDelivery: true },
+      betterAuth: { database: db },
     });
 
-    const res = await sendOtp(awaitedAuth(sendOTP, {}, new DeleteRefusingKV()));
+    const res = await sendOtp(auth);
 
     expect(res.status).toBe(502);
     expect(await res.json()).toMatchObject({ code: OTP_DELIVERY_FAILED });
+  });
+
+  // The failed resend's code is deleted, which makes the user's earlier,
+  // still valid code the current one again.
+  it('leaves the previous code working when a resend fails', async () => {
+    const codes: string[] = [];
+    const sendOTP: CreateAuthPhoneOptions['sendOTP'] = ({ code }) => {
+      codes.push(code);
+      if (codes.length === 2) throw new Error('gateway down');
+    };
+    const auth = awaitedAuth(sendOTP);
+
+    await sendOtp(auth);
+    const failed = await sendOtp(auth);
+    const verified = await verify(auth, codes[0] ?? '');
+
+    expect(failed.status).toBe(502);
+    expect(verified.status).toBe(200);
   });
 
   it('rounds retryAfter up to whole seconds, and drops one that is not a number', async () => {
