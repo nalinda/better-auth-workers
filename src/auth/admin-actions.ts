@@ -125,7 +125,13 @@ export async function withAuthInstance<T>(
     return await action(auth, resolveKv(options, env));
   } finally {
     if (resolveHyperdriveConnectionString(options, env) !== undefined) {
-      await (auth.options.database as { end: () => Promise<void> }).end();
+      // The action has already committed; a pool that fails to close must
+      // not turn its result into an error (the HTTP path logs it the same way).
+      try {
+        await (auth.options.database as { end: () => Promise<void> }).end();
+      } catch (error) {
+        console.error('better-auth-workers: failed to release the pg Pool', error);
+      }
     }
   }
 }

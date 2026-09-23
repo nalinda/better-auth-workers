@@ -181,6 +181,27 @@ describe('withAuthInstance', () => {
     expect(pools.map((pool) => pool.ended)).toEqual([true, true]);
   });
 
+  it('returns the result even when releasing the pool fails', async () => {
+    class Pool {
+      end() {
+        return Promise.reject(new Error('connection reset'));
+      }
+    }
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      const result = await withAuthInstance(
+        buildEnv({ DB: undefined }),
+        { database: { hyperdrive: { connectionString: 'postgres://u:p@h:5432/d' }, pg: { Pool } } },
+        () => Promise.resolve('banned')
+      );
+
+      expect(result).toBe('banned');
+    } finally {
+      console.error = originalError;
+    }
+  });
+
   it('leaves a D1 binding alone', async () => {
     const db = { prepare: mock(), batch: mock(), exec: mock(), end: mock() };
     const env = buildEnv({ DB: db as unknown as D1Database });
