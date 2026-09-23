@@ -16,6 +16,13 @@ function collectConfigProblems(options?: CreateAuthOptions, env?: Partial<AuthEn
   if (resolveSecret(options, env) === undefined) {
     problems.push('secret is required: specify options.secret or env.BETTER_AUTH_SECRET');
   }
+  // Better Auth hands a sendOTP that returns a promise to its background
+  // task handler instead of awaiting it, which would undo awaitDelivery.
+  if (options?.phone?.awaitDelivery && options.betterAuth?.advanced?.backgroundTasks?.handler) {
+    problems.push(
+      'phone.awaitDelivery cannot be combined with betterAuth.advanced.backgroundTasks: Better Auth runs sendOTP as a background task then, so its failure never reaches the response'
+    );
+  }
   const dbProblem = databaseProblem(options, env);
   if (dbProblem) problems.push(dbProblem);
   const kvMissing = kvProblem(options, env);

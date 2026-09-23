@@ -1,7 +1,7 @@
 import type { BetterAuthPlugin } from 'better-auth';
 import { APIError, createAuthEndpoint } from 'better-auth/api';
 
-import { disallowedMessage, OPTIONAL_METHOD_ROUTES } from './sign-in-routes';
+import { disallowedBody, OPTIONAL_METHOD_ROUTES } from './sign-in-routes';
 import type { CreateAuthOptions } from './types';
 
 // The sign-in routes each optional method's plugin would mount (the shared
@@ -28,7 +28,7 @@ export function buildDisallowedMethodStubs(
     if (allowed.includes(method) || isConfigured(options)) continue;
     for (const route of routes) {
       endpoints[route.name] = createAuthEndpoint(route.path, { method: route.method }, () => {
-        throw new APIError('FORBIDDEN', { message: disallowedMessage(method) });
+        throw new APIError('FORBIDDEN', disallowedBody(method));
       });
     }
   }

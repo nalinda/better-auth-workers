@@ -8,6 +8,13 @@ export interface CreateAuthPhoneOptions {
   otpLength?: number;
   expiresIn?: number;
   allowedAttempts?: number;
+  // Await `sendOTP` before answering, so a delivery failure reaches the
+  // client as an error instead of a `200`. See README "Delivery failures".
+  awaitDelivery?: boolean;
+  // Runs before a code is created, so a refusal (throw an OTPDeliveryError)
+  // leaves any code already sent to the number valid. Per-number limits go
+  // here. See README "Limiting codes per number".
+  beforeSendOTP?: (args: { phoneNumber: string }, request?: Request) => Promise<void> | void;
   signUpOnVerification?: {
     getTempEmail: (phoneNumber: string) => string;
     getTempName?: (phoneNumber: string) => string;

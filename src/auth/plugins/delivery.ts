@@ -35,7 +35,7 @@ function redact(text: string, secrets: string[]): string {
 // is, and anything else (an SDK rejecting with a parsed error response, a
 // plain object echoing the request body) by serialising it first, so the
 // logged form can never carry the code or link.
-function redactSecrets(error: Error | string | object, secrets: string[]): unknown {
+export function redactSecrets(error: Error | string | object, secrets: string[]): unknown {
   if (error instanceof Error) {
     const message = redact(error.message, secrets);
     if (message === error.message) return error;
