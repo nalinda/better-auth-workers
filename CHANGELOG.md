@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-23
+
 ### Added
 
 - `testMode: { otpCode?, google? }` for end-to-end tests: every phone verification accepts `otpCode` and nothing is sent, and Google sign-in goes through an in-process stub that signs in the identity named by `loginHint` (or answers like a refused consent screen for `error:<code>`). `createAuth` refuses it unless every base URL is `http://` on a loopback host, and while it is on the instance refuses every call naming another host: HTTP requests by their URL, and server-side `auth.api` calls that forward headers by their `host` and `x-forwarded-host` (refused when they name none).
