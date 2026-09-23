@@ -86,7 +86,9 @@ describe('database.schema on Postgres', () => {
     const userQueries = statements.filter((sql) => sql.includes('"user"'));
     expect(userQueries.length).toBeGreaterThan(0);
     expect(userQueries.some((sql) => sql.includes('"auth_ba"'))).toBe(false);
-    expect(auth.options.database).toBeDefined();
+    // The bare pool is passed through, not the dialect form.
+    expect(auth.options.database).not.toHaveProperty('schemaName');
+    expect(auth.options.database).toHaveProperty('connect');
   });
 
   // The README's contract for Workers that call `auth.api.*` directly: the

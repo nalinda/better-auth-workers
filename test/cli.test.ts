@@ -48,7 +48,7 @@ describe('better-auth-workers CLI', () => {
     ['an unknown command', ['migrate'], /Unknown command: migrate/],
     ['an unknown option', ['sql', '--dialect', 'sqlite'], /Unknown option/],
     ['an unknown id type', ['sql', '--id-type', 'serial'], /--id-type must be "text" or "uuid"/],
-    ['an unsafe schema name', ['sql', '--schema', 'a"b'], /schema must be/],
+    ['an unsafe schema name', ['sql', '--schema', 'a"b'], /--schema must be/],
   ] as const) {
     it(`fails with ${label}`, () => {
       const { exitCode, stdout, stderr } = run(...args);

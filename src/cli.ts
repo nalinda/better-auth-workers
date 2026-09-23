@@ -2,6 +2,7 @@
 import nodeProcess from 'node:process';
 import { parseArgs } from 'node:util';
 
+import { schemaNameProblem } from './auth/database';
 import type { CreateAuthIdType } from './auth/types';
 import { generatePostgresSql } from './migrations/generate';
 
@@ -49,6 +50,8 @@ async function sqlCommand(args: string[]): Promise<string> {
   if (values.help) return USAGE;
   const { schema } = values;
   const idType = values['id-type'] ?? 'text';
+  const schemaProblem = schema === undefined ? undefined : schemaNameProblem(schema, '--schema');
+  if (schemaProblem) throw new UsageError(schemaProblem);
   if (!isIdType(idType)) {
     throw new UsageError(`--id-type must be "text" or "uuid", got ${JSON.stringify(idType)}`);
   }
