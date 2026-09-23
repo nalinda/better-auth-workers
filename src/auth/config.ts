@@ -55,13 +55,18 @@ export function buildRateLimitConfig(
 // populates. `betterAuth.advanced.ipAddress` overrides this wholesale.
 const DEFAULT_IP_ADDRESS_HEADERS = ['cf-connecting-ip', 'x-forwarded-for'];
 
+// `idType: 'uuid'` is Better Auth's own `generateId: 'uuid'`: on Postgres it
+// leaves the id to the column's `gen_random_uuid()` default, on D1 it
+// generates the UUID itself. A `generateId` set through
+// `betterAuth.advanced.database` still wins, like every escape-hatch field.
 export function buildAdvancedConfig(options?: CreateAuthOptions): Loose {
   const advanced = betterAuthField(options, 'advanced');
   const database = advanced?.database as Loose | undefined;
   const ipAddress = advanced?.ipAddress as Loose | undefined;
+  const generateId = options?.idType === 'uuid' ? { generateId: 'uuid' } : {};
   return {
     ...advanced,
-    database: { validateSchema: false, ...database },
+    database: { validateSchema: false, ...generateId, ...database },
     ipAddress: { ipAddressHeaders: DEFAULT_IP_ADDRESS_HEADERS, ...ipAddress },
   };
 }

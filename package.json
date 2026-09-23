@@ -28,20 +28,26 @@
       "default": "./dist/client.js"
     }
   },
+  "bin": {
+    "better-auth-workers": "./dist/cli.js"
+  },
   "files": [
     "dist",
     "migrations"
   ],
   "scripts": {
-    "build": "bun build src/index.ts src/client.ts --outdir dist --packages external && tsc -p tsconfig.build.json",
+    "build": "bun build src/index.ts src/client.ts --outdir dist --packages external && bun build src/cli.ts --outdir dist --target node --packages external && tsc -p tsconfig.build.json",
     "lint": "eslint . --cache --cache-location .eslintcache --cache-strategy content",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "ts-check": "tsc --noEmit",
     "test": "bun test",
-    "test:integration": "bun test test/integration/wrangler-dev.test.ts",
+    "test:integration": "bun test test/integration/wrangler-dev.test.ts test/integration/postgres-schema.test.ts",
     "knip": "knip",
     "prepare": "test -e .git || exit 0; husky && bun node_modules/@serendibyte-co/eslint-config/hooks/fix-hooks-path.sh"
+  },
+  "dependencies": {
+    "kysely": "^0.28.17 || ^0.29.0"
   },
   "peerDependencies": {
     "@cloudflare/workers-types": ">=4.0.0",

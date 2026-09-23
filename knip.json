@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "entry": ["src/index.ts", "src/client.ts", "examples/**/*.ts"],
+  "entry": ["src/index.ts", "src/client.ts", "src/cli.ts", "examples/**/*.ts"],
   "project": ["src/**/*.ts", "examples/**/*.ts"],
   "ignoreDependencies": ["wrangler"]
 }

@@ -36,8 +36,19 @@ export interface CreateAuthDatabaseOptions {
   // driver has to be imported by the Worker itself for the bundler to
   // include it; the package cannot load it on the consumer's behalf.
   pg?: PgDriver;
+  // Postgres schema the auth tables live in (Hyperdrive only). Every query
+  // is qualified with it through Better Auth's `schemaName`, so nothing
+  // relies on the connection's `search_path`. Generate matching SQL with
+  // `better-auth-workers sql --schema <name>`.
+  schema?: string;
   d1?: D1Database;
 }
+
+// How ids are generated. `'uuid'` has Better Auth issue UUIDs: on Postgres
+// the database generates them (the id columns need a `gen_random_uuid()`
+// default, which `better-auth-workers sql --id-type uuid` emits), on D1
+// Better Auth generates them itself and stores them as text.
+export type CreateAuthIdType = 'text' | 'uuid';
 
 export interface CreateAuthSecondaryStorage {
   get(key: string): Promise<string | null> | string | null;
@@ -75,6 +86,7 @@ export interface CreateAuthOptions {
   magicLink?: CreateAuthMagicLinkOptions;
   google?: boolean | { clientId: string; clientSecret: string };
   bearer?: boolean;
+  idType?: CreateAuthIdType;
   /**
    * @deprecated Configure only the sign-in methods this Worker should accept
    * (`phone`, `google`, `magicLink`) instead. Removed in the next major

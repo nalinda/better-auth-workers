@@ -79,7 +79,7 @@ function readMigration(dialect: 'postgres' | 'sqlite'): string {
   return fs.readFileSync(file, 'utf8');
 }
 
-interface PostgresHandle {
+export interface PostgresHandle {
   connectionString: string;
   stop: () => Promise<void>;
 }
@@ -166,7 +166,12 @@ function startPostgresContainer(): { adminUrl: string; stop: () => Promise<void>
   };
 }
 
-async function provisionPostgres(): Promise<PostgresHandle> {
+// A fresh database on the CI service container (INTEGRATION_POSTGRES_URL) or a
+// throwaway local container, with `migrationSql` applied — the shipped
+// migration unless a test brings its own (e.g. one generated for a schema).
+export async function provisionPostgres(
+  migrationSql: string = readMigration('postgres')
+): Promise<PostgresHandle> {
   const external = Bun.env.INTEGRATION_POSTGRES_URL;
   const container = external ? undefined : startPostgresContainer();
   const adminUrl = external ?? (container as { adminUrl: string }).adminUrl;
@@ -182,7 +187,7 @@ async function provisionPostgres(): Promise<PostgresHandle> {
   const connectionString = url.href;
 
   const db = new SQL(connectionString);
-  await db.unsafe(readMigration('postgres'));
+  await db.unsafe(migrationSql);
   await db.close();
 
   return {
