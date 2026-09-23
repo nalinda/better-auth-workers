@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- README: _Same origin behind a proxy_ documents (and `test/proxy-path.test.ts` tests) an auth Worker reached through service-binding hops on the app's origin: base URL and path, forwarding the request as is, cookie scope, the CSRF origin check, the Google redirect URI and the session client.
 - `createSessionClient` now sends its requests to the auth Worker as `https://auth.localhost/...` instead of `https://auth.internal/...`. Service bindings ignore the host, so nothing changes for most setups, and a test-mode auth Worker now answers them. If you allow-listed `auth.internal` (a dynamic `betterAuth.baseURL` with `allowedHosts`) or route on that host in a gateway Worker, switch to `auth.localhost`.
 
 ### Fixed
