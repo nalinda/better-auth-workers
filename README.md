@@ -293,7 +293,7 @@ By default `send-otp` answers `200` before `sendOTP` has run, so the user can't 
 - If it throws, the response is `502` with `code: 'OTP_DELIVERY_FAILED'`, and the error is logged with the code redacted. The undelivered code is deleted so it can't be verified; a newer code from a resend is left alone.
 - If it throws an `OTPDeliveryError`, the response carries that error's own code, message and status instead, plus `retryAfter` (whole seconds, in the body and as a `Retry-After` header) when you give one. Nothing is logged: it's a refusal you chose.
 
-Better Auth stores the new code before `sendOTP` runs, and only the newest code for a number is accepted. When the new one fails to go out, it's deleted, so the user's previous code, if it hasn't expired, works again. Refusals you can decide on before sending, such as a per-number limit, belong in `beforeSendOTP` instead (below).
+Better Auth stores the new code before `sendOTP` runs, and only the newest code for a number is accepted. When the new one fails to go out, it's deleted, so the user's previous code, if it hasn't expired, works again. (With your own `betterAuth.secondaryStorage` and `verification.storeInDatabase: false`, which hold one code per number, the resend has already replaced it, so the user has to request a new one.) Refusals you can decide on before sending, such as a per-number limit, belong in `beforeSendOTP` instead (below).
 
 `awaitDelivery` can't be combined with `betterAuth.advanced.backgroundTasks`: Better Auth then runs `sendOTP` as a background task, so `createAuth` refuses the combination. With `awaitDelivery` the response takes as long as delivery does, so keep `sendOTP` fast.
 

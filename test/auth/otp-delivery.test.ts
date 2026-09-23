@@ -241,6 +241,44 @@ describe('phone.awaitDelivery', () => {
     expect(withDelivered.status).toBe(200);
   });
 
+  // A consumer's own secondary storage, with codes kept out of the
+  // database: one code per number, removed when its delivery fails.
+  it('deletes the undelivered code from a consumer store that keeps codes out of the database', async () => {
+    const store = new Map<string, string>();
+    const secondaryStorage = {
+      get: (key: string) => store.get(key) ?? null,
+      set: (key: string, value: string) => {
+        store.set(key, value);
+      },
+      delete: (key: string) => {
+        store.delete(key);
+      },
+      increment: () => 1,
+    };
+    const codes: string[] = [];
+    const auth = createAuth(buildEnv({ DB: undefined, AUTH_KV: new FakeKV().asBinding() }), {
+      phone: {
+        awaitDelivery: true,
+        sendOTP: ({ code }) => {
+          codes.push(code);
+          throw new Error('gateway down');
+        },
+      },
+      betterAuth: {
+        database: migratedSqlite(),
+        secondaryStorage,
+        verification: { storeInDatabase: false },
+      },
+    });
+
+    const failed = await sendOtp(auth);
+    const verified = await verify(auth, codes[0] ?? '');
+
+    expect(failed.status).toBe(502);
+    expect(verified.status).toBe(400);
+    expect(await verified.json()).toMatchObject({ code: 'OTP_NOT_FOUND' });
+  });
+
   it('still answers 502 OTP_DELIVERY_FAILED when deleting the undelivered code fails', async () => {
     const db = migratedSqlite();
     const sendOTP: CreateAuthPhoneOptions['sendOTP'] = () => {
