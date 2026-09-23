@@ -324,7 +324,7 @@ describe('Hono auth Worker implementation', () => {
     const { default: app } = (await import(authWorkerPath)) as WorkerModule;
 
     const withoutSecrets = await app.fetch(signIn(), stubAuthEnv(), stubCtx().ctx);
-    expect(withoutSecrets.status).toBe(403);
+    expect(withoutSecrets.status).toBe(404);
 
     const withSecrets = await app.fetch(
       signIn(),

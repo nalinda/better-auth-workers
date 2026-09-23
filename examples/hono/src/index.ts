@@ -29,9 +29,6 @@ app.on(['GET', 'POST'], '/auth/*', (c) => {
     },
     google: hasGoogle ? true : undefined,
     bearer: true,
-    // Sign-in methods this deployment accepts; any other method's routes
-    // answer 403, whether or not that method's plugin is configured.
-    allowedMethods: hasGoogle ? ['phone', 'magic-link', 'google'] : ['phone', 'magic-link'],
   });
 
   // The request's ExecutionContext goes with every call: the instance may

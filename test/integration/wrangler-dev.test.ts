@@ -408,11 +408,14 @@ describe.each(backends)('example Worker under wrangler dev (%s)', (backend: Back
     expect(statuses).toEqual([200, 200, 200, 200, 200, 429]);
   });
 
-  it('allowedMethods rejects a sign-in method the Worker does not allow with 403', async () => {
+  it('refuses a sign-in method the Worker does not configure', async () => {
+    // The example configures Google only when its secrets are set, and the
+    // integration environment sets none, so the provider does not exist.
     const rejected = await postJson(server, '/auth/sign-in/social', {
       provider: 'google',
       callbackURL: '/',
     });
-    expect(rejected.status).toBe(403);
+    expect(rejected.status).toBe(404);
+    expect(await rejected.json()).toMatchObject({ code: 'PROVIDER_NOT_FOUND' });
   });
 });

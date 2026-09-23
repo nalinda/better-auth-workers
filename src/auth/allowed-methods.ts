@@ -1,5 +1,6 @@
 import { APIError } from 'better-auth';
 
+import { warnOnce } from '../shared/warn-once';
 import { disallowedMessage, methodOfPath } from './sign-in-routes';
 import type { CreateAuthOptions } from './types';
 
@@ -9,6 +10,15 @@ interface BeforeHookContext {
   path: string;
   body?: { provider?: string; [key: string]: unknown };
 }
+
+// Deprecated in 0.3.0: every method is already opt-in per `createAuth`
+// call, and this check only knows the routes in sign-in-routes.ts, so a
+// plugin that adds another route into a method (Better Auth's oauthPopup
+// or oneTap, for Google) is not restricted by it.
+const ALLOWED_METHODS_DEPRECATION_WARNING =
+  'better-auth-workers: `allowedMethods` is deprecated and will be removed in the next major version. Configure only the sign-in methods this Worker should accept (`phone`, `google`, `magicLink`) instead.';
+
+const warnAllowedMethodsDeprecated = warnOnce(ALLOWED_METHODS_DEPRECATION_WARNING);
 
 function forbidden(method: AllowedMethod): never {
   throw new APIError('FORBIDDEN', { message: disallowedMessage(method) });
@@ -28,13 +38,16 @@ function forbidden(method: AllowedMethod): never {
  * well as sign-in and OTP).
  *
  * Returns `undefined` when `options.allowedMethods` is not set, since there
- * is nothing to restrict.
+ * is nothing to restrict. Otherwise logs the deprecation warning, once per
+ * isolate.
  */
 export function buildAllowedMethodsHook(
   options?: CreateAuthOptions
 ): ((ctx: BeforeHookContext) => void) | undefined {
+  // eslint-disable-next-line sonarjs/deprecation -- the deprecated option's own implementation
   const allowedMethods = options?.allowedMethods;
   if (!allowedMethods) return undefined;
+  warnAllowedMethodsDeprecated();
 
   const allowed = new Set<AllowedMethod>(allowedMethods);
 
