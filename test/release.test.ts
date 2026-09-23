@@ -179,6 +179,22 @@ describe('Release workflow', () => {
     expect(jobOf('release')?.permissions).toEqual({ contents: 'write', 'id-token': 'write' });
   });
 
+  // A frozen install trusts a restored node_modules as is, so a cache that
+  // any job running unlocked code could have written must never feed the
+  // build that is shipped, nor be written to by the unlocked check.
+  it('uses no shared dependency cache in any release job', () => {
+    for (const job of allJobs()) {
+      const steps = job.steps ?? [];
+      for (const step of steps) {
+        expect(step.uses ?? '').not.toContain('bun-install');
+        expect(step.uses ?? '').not.toMatch(/^actions\/cache/);
+      }
+    }
+    for (const name of ['build', 'check-tarball'] as const) {
+      expect(stepsOf(name).some((s) => isRunning(s, 'bun install --frozen-lockfile'))).toBe(true);
+    }
+  });
+
   it('runs no dependency code in the release job', () => {
     for (const step of stepsOf('release')) {
       expect(step.uses ?? '').not.toContain('bun-install');

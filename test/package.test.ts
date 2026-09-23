@@ -137,13 +137,14 @@ describe('Package scaffolding and metadata', () => {
   });
 
   // In a git worktree `.git` is a file, not a directory; the guard must
-  // still treat it as a checkout and go on to install the hooks.
-  it('prepare still installs the hooks inside a checkout, including a worktree', () => {
+  // still treat it as a checkout and go on to run husky, which is not on the
+  // stripped PATH, so reaching it is the shell's command-not-found (127).
+  it('prepare still runs husky inside a checkout, including a worktree', () => {
     const exitCode = runPrepareIn((dir) => {
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- test-owned temp directory
       fs.writeFileSync(path.join(dir, '.git'), 'gitdir: /elsewhere\n');
     });
-    expect(exitCode).not.toBe(0);
+    expect(exitCode).toBe(127);
   });
 
   it('tsconfig.json enables strict mode', () => {

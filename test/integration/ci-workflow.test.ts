@@ -5,6 +5,7 @@ import { describe, expect, it } from 'bun:test';
 
 interface Step {
   run?: string;
+  uses?: string;
   env?: Record<string, string>;
 }
 
@@ -51,5 +52,25 @@ describe('CI runs the wrangler dev integration suite', () => {
   it('runs the d1 backend', () => {
     const job = integrationJobs().find((candidate) => /\bd1\b/.test(backendsRun(candidate)));
     expect(job).toBeDefined();
+  });
+});
+
+describe('CI checks the packed tarball without touching shared caches', () => {
+  const packedJobs = jobs.filter((job) =>
+    (job.steps ?? []).some((step) => (step.run ?? '').includes('scripts/check-packed-install.sh'))
+  );
+
+  it('has a job that runs the packed install check', () => {
+    expect(packedJobs).toHaveLength(1);
+  });
+
+  // The check installs unlocked registry code and runs it; a cache this job
+  // saved would be restored, unverified, by later builds.
+  it('neither restores nor saves a dependency cache in that job', () => {
+    const steps = packedJobs.at(0)?.steps ?? [];
+    for (const step of steps) {
+      expect(step.uses ?? '').not.toContain('bun-install');
+      expect(step.uses ?? '').not.toMatch(/^actions\/cache/);
+    }
   });
 });

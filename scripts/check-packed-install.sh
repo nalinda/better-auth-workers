@@ -25,6 +25,10 @@ fi
 # repository is tested against so the check does not drift with the registry.
 better_auth_version="$(cd "$root" && bun -e "console.log(require('better-auth/package.json').version)")"
 
+# A private download cache: nothing resolved here lands in Bun's global cache,
+# where a later install on this machine or CI runner would pick it up.
+export BUN_INSTALL_CACHE_DIR="$workdir/bun-cache"
+
 cd "$workdir"
 mkdir consumer
 cd consumer

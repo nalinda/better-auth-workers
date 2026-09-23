@@ -24,7 +24,9 @@ name: Release
 # it into a fresh consumer project (which resolves better-auth's dependencies
 # from the registry, unlocked) with read-only permissions, and `release` —
 # the only job that can write releases or mint an OIDC token — runs no
-# dependency code at all and refuses a tarball whose checksum changed.
+# dependency code at all and refuses a tarball whose checksum changed. No
+# job uses the shared dependency cache, so nothing another workflow wrote
+# into it can reach what is built and shipped.
 
 on:
   push:
@@ -50,7 +52,16 @@ jobs:
         # later step (and anything they run) could read them.
         with:
           persist-credentials: false
-      - uses: ./.github/actions/bun-install
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      # Deliberately uncached: a restored node_modules is trusted as is by a
+      # frozen install, so a cache written by any job that ran unlocked code
+      # could change what gets built and shipped. A fresh install checks
+      # every package against the lockfile's integrity hashes.
+      - name: Install dependencies (uncached)
+        run: bun install --frozen-lockfile
 
       - name: Build
         run: bun run build
@@ -97,8 +108,15 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
       # The locked install supplies the better-auth version the check pins.
-      - uses: ./.github/actions/bun-install
+      # Uncached, like every job here, so the unlocked install below cannot
+      # write into a cache a later build restores.
+      - name: Install dependencies (uncached)
+        run: bun install --frozen-lockfile
 
       - uses: actions/download-artifact@v8
         with:

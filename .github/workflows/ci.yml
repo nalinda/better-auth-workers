@@ -55,8 +55,29 @@ jobs:
       - name: Build (dist)
         run: bun run build
 
-      # What a consumer pinning a release asset gets: the packed tarball,
-      # installed into a fresh Bun project, with every entry point imported.
+  # What a consumer pinning a release asset gets: the packed tarball,
+  # installed into a fresh Bun project, with every entry point imported.
+  # That install resolves better-auth's dependencies from the registry with
+  # no lockfile and runs them, so this job touches no shared cache: it
+  # neither restores nor saves node_modules or Bun's download cache, and
+  # nothing it resolves can reach a later build.
+  packed-install:
+    name: Packed tarball installs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Install dependencies (uncached)
+        run: bun install --frozen-lockfile
+
+      - name: Build (dist)
+        run: bun run build
+
       - name: Check the packed tarball installs and imports
         run: scripts/check-packed-install.sh
 
