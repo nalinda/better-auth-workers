@@ -75,6 +75,11 @@ export interface CreateAuthOptions {
   magicLink?: CreateAuthMagicLinkOptions;
   google?: boolean | { clientId: string; clientSecret: string };
   bearer?: boolean;
+  /**
+   * @deprecated Configure only the sign-in methods this Worker should accept
+   * (`phone`, `google`, `magicLink`) instead. Removed in the next major
+   * version.
+   */
   allowedMethods?: Array<'phone' | 'google' | 'magic-link'>;
   plugins?: BetterAuthPlugin[];
   // The single escape hatch: any Better Auth option (`session`, `rateLimit`,

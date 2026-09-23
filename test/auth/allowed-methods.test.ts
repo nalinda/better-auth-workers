@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
+import type * as AllowedMethods from '../../src/auth/allowed-methods';
 import { createAuth } from '../../src/index';
 import { buildEnv, postJSON as postJSONTo, VALID_BASE_URL } from '../helpers/auth';
 
@@ -231,5 +232,57 @@ describe('allowedMethods restricts sign-in routes per deployment', () => {
 
       expect(res.status).not.toBe(403);
     });
+  });
+});
+
+describe('allowedMethods is deprecated', () => {
+  // A fresh copy of the module per test: its warning is once per isolate,
+  // and other tests in this process may already have set `allowedMethods`.
+  let fresh = 0;
+  async function freshModule(): Promise<typeof AllowedMethods> {
+    fresh += 1;
+    const specifier = `../../src/auth/allowed-methods.ts?fresh=${String(fresh)}`;
+    return (await import(specifier)) as typeof AllowedMethods;
+  }
+
+  const originalWarn = console.warn;
+  let warn: ReturnType<typeof mock>;
+
+  beforeEach(() => {
+    warn = mock(() => {});
+    console.warn = warn;
+  });
+
+  afterEach(() => {
+    console.warn = originalWarn;
+  });
+
+  it('warns once, however many instances set it', async () => {
+    const { buildAllowedMethodsHook } = await freshModule();
+
+    buildAllowedMethodsHook({ allowedMethods: ['google'] });
+    buildAllowedMethodsHook({ allowedMethods: ['phone'] });
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain('`allowedMethods` is deprecated');
+  });
+
+  it('does not warn when allowedMethods is not set', async () => {
+    const { buildAllowedMethodsHook } = await freshModule();
+
+    buildAllowedMethodsHook({});
+    buildAllowedMethodsHook();
+
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('still restricts sign-in routes while deprecated', async () => {
+    const { buildAllowedMethodsHook } = await freshModule();
+
+    const check = buildAllowedMethodsHook({ allowedMethods: ['google'] });
+
+    expect(() => check?.({ path: '/phone-number/send-otp' })).toThrow(
+      'phone sign-in is not enabled for this deployment'
+    );
   });
 });

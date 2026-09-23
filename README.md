@@ -46,7 +46,7 @@ This package does those four things and stops.
 - **Phone OTP** through Better Auth's phone-number plugin with a `sendOTP` you implement, run under `waitUntil` so delivery latency never leaks into the response.
 - **Magic-link sign-in** through Better Auth's magic-link plugin with a `sendMagicLink` you implement, run under `waitUntil` the same way.
 - **Google sign-in** configured from secrets.
-- **Sign-in method restriction** per deployment, for example social-only for an internal app.
+- **Per-Worker sign-in methods**: each method is opt-in, so a Worker accepts only the ones it configures, for example social-only for an internal app.
 - **`createSessionClient`** for other Workers: verify a session over a service binding, cache it in KV, and get a Hono `requireSession()` middleware.
 - **Bearer tokens** for mobile and CLI clients through Better Auth's bearer plugin.
 - **SQL migrations shipped in the package** for both Postgres and SQLite, covering the default schema.
@@ -173,14 +173,14 @@ await authClient.phoneNumber.verify({ phoneNumber: '+15555550123', code: '123456
 | `google`         | `boolean \| { clientId, clientSecret }`                                                  | off                      | Enables Google sign-in. `true` reads the secrets from `env`.                                                                       |
 | `magicLink`      | `{ sendMagicLink, expiresIn?, disableSignUp? }`                                          | off                      | Enables magic-link sign-in. See [Magic link sign-in](#magic-link-sign-in).                                                         |
 | `bearer`         | `boolean`                                                                                | `false`                  | Enables the bearer plugin for non-browser clients.                                                                                 |
-| `allowedMethods` | `Array<'phone' \| 'google' \| 'magic-link'>`                                             | all enabled              | Rejects sign-in attempts through any of the package's other sign-in methods.                                                       |
+| `allowedMethods` | `Array<'phone' \| 'google' \| 'magic-link'>`                                             | all enabled              | **Deprecated.** Configure only the methods to accept instead. See [Restricting sign-in methods](#restricting-sign-in-methods).     |
 | `plugins`        | `BetterAuthPlugin[]`                                                                     | `[]`                     | Extra Better Auth plugins, appended after the built-in ones (`betterAuth.plugins` is appended the same way, never replacing them). |
 | `betterAuth`     | `Partial<BetterAuthOptions>` (loose for `database`/`plugins`/`secondaryStorage`/`hooks`) | `{}`                     | Escape hatch. Merged last, so it can override anything above.                                                                      |
 | `ctx`            | `WaitUntilContext`                                                                       | none                     | Fallback context for `waitUntil` work; `auth.handler(request, ctx)` takes precedence.                                              |
 
 **Package defaults under `betterAuth`.** This package sets five Better Auth settings for you: session cookie caching (`session.cookieCache.enabled: true`), the rate limiter turned on and pointed at KV (`rateLimit.enabled: true`, `rateLimit.storage: 'secondary-storage'` — left to itself, Better Auth would leave the limiter off in a deployed Worker), schema validation off (`advanced.database.validateSchema: false`), and client-IP resolution that prefers Cloudflare's unspoofable header (`advanced.ipAddress.ipAddressHeaders: ['cf-connecting-ip', 'x-forwarded-for']`).
 
-You don't lose the ability to override any of it. Whatever you set under `betterAuth.session`, `betterAuth.rateLimit` or `betterAuth.advanced` merges over these defaults field by field, so you only state what you want to change — for example `betterAuth: { rateLimit: { storage: 'memory' } }`. `betterAuth.socialProviders` merges the same way, per provider: `{ socialProviders: { google: { scope: [...] } } }` adds to the `google` config this package already resolved from `env`, rather than replacing it, and adding a provider it never configured (`github`, say) just works. `betterAuth.hooks` compose with the package's own hooks (method restriction, cache invalidation), which always run first.
+You don't lose the ability to override any of it. Whatever you set under `betterAuth.session`, `betterAuth.rateLimit` or `betterAuth.advanced` merges over these defaults field by field, so you only state what you want to change — for example `betterAuth: { rateLimit: { storage: 'memory' } }`. `betterAuth.socialProviders` merges the same way, per provider: `{ socialProviders: { google: { scope: [...] } } }` adds to the `google` config this package already resolved from `env`, rather than replacing it, and adding a provider it never configured (`github`, say) just works. `betterAuth.hooks` compose with the package's own hooks (cache invalidation, and method restriction when the deprecated `allowedMethods` is set), which always run first.
 
 Everything not listed is Better Auth's default. Session lifetime, cookie attributes, OTP length and attempts are all Better Auth's defaults unless you change them through `phone` or `betterAuth`.
 
@@ -298,15 +298,19 @@ No secrets are required beyond the ones already needed for `baseURL` and `secret
 
 ## Restricting sign-in methods
 
-Some deployments should accept only some methods. An internal admin app might allow Google and nothing else, even though the same package is configured with phone OTP elsewhere.
+Every sign-in method is opt-in, so a Worker accepts exactly the methods it configures. An internal admin app that should allow Google and nothing else configures only Google, even if other Workers built from the same code also configure phone OTP:
 
 ```ts
-allowedMethods: ['google'];
+createAuth(env, { database: env.DB, kv: env.AUTH_KV, google: true });
 ```
 
-installs a `before` hook that rejects requests to any of the package's other sign-in methods' routes with `403`. It only knows about `phone`, `google` and `magic-link` — the three methods this package configures. A sign-in route you add yourself through `plugins` or `betterAuth` (a custom OAuth provider, `emailAndPassword`, and so on) is neither restricted nor listable here.
+Phone and magic-link routes are not mounted at all, so requests to them get `404`. When several Workers share one options object, build it per Worker and leave out the methods that Worker should not accept.
 
-The rejected routes stay mounted so clients get a clear `403` instead of a `404` — either by the method's own plugin when it's configured, or by a stub that just rejects when it isn't. A Google-only Worker that never configured `phone`, for example, still answers `/phone-number/send-otp` with `403`, while Google sign-in and `get-session` keep working. A method that's allowed but simply never configured is just absent — `404` — since there's nothing to serve it.
+### `allowedMethods` (deprecated)
+
+`allowedMethods` is deprecated and will be removed in the next major version. It still works, and logs a warning once per isolate. It installs a `before` hook that answers the routes of any listed-out method with `403`, but it only knows the routes this package mounts for `phone`, `google` and `magic-link`. A plugin you add that opens another route into one of those methods is not restricted by it. For example, Better Auth's `oauthPopup` and `oneTap` plugins each start Google sign-in from their own route. Leaving a method unconfigured has no such gap, because the provider or plugin is simply not there.
+
+To migrate, delete `allowedMethods` and remove the options (`phone`, `google`, `magicLink`) for every method it left out. Requests to those methods then get `404` instead of `403`.
 
 ## Using sessions from another Worker
 
