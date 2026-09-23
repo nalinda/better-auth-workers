@@ -50,6 +50,17 @@ export interface CreateAuthDatabaseOptions {
 // Better Auth generates them itself and stores them as text.
 export type CreateAuthIdType = 'text' | 'uuid';
 
+// Deterministic stand-ins for end-to-end tests. Refused unless every base
+// URL is http:// on a loopback host; see README "Test mode".
+export interface CreateAuthTestModeOptions {
+  // Every phone verification accepts this code (4 to 10 digits), and
+  // nothing is sent.
+  otpCode?: string;
+  // Google sign-in goes through an in-process stub that signs in the
+  // identity named by the sign-in's `loginHint`.
+  google?: boolean;
+}
+
 export interface CreateAuthSecondaryStorage {
   get(key: string): Promise<string | null> | string | null;
   set(key: string, value: string, ttl?: number): Promise<void> | void;
@@ -94,6 +105,7 @@ export interface CreateAuthOptions {
    */
   allowedMethods?: Array<'phone' | 'google' | 'magic-link'>;
   plugins?: BetterAuthPlugin[];
+  testMode?: CreateAuthTestModeOptions;
   // The single escape hatch: any Better Auth option (`session`, `rateLimit`,
   // `hooks`, `advanced`, ...). Merged last, so it can override anything.
   // Typed against Better Auth's own options, so a misspelled key here is a

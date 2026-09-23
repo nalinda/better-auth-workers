@@ -30,9 +30,21 @@ function isValidE164(phoneNumber: string): boolean {
   return E164_REGEX.test(phoneNumber);
 }
 
+// Test mode: every verification accepts the fixed code, and no code is sent
+// at all. The attempt limit and expiry do not apply, since no stored code is
+// checked. That requests arrive on localhost is enforced for every route by
+// the test-mode plugin (see test-mode.ts).
+function testModeOTP(otpCode: string): Pick<PhoneNumberOptions, 'sendOTP' | 'verifyOTP'> {
+  return {
+    sendOTP: () => {},
+    verifyOTP: ({ code }) => code === otpCode,
+  };
+}
+
 export function buildPhonePlugin(
   phoneOpts: CreateAuthPhoneOptions | undefined,
-  ctxRef: ContextRef
+  ctxRef: ContextRef,
+  testModeOtpCode?: string
 ) {
   if (!phoneOpts) return;
   const phonePluginOptions: PhoneNumberOptions = {
@@ -46,6 +58,7 @@ export function buildPhonePlugin(
       const req = ctx?.request;
       deliverNonBlocking(() => phoneOpts.sendOTP(data, req), req, ctxRef, [data.code]);
     },
+    ...(testModeOtpCode !== undefined && testModeOTP(testModeOtpCode)),
   };
   return phoneNumber(phonePluginOptions);
 }

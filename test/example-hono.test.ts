@@ -410,6 +410,6 @@ describe('Second Worker with service binding and session validation', () => {
     const user: typeof mockSession.user = await res.json();
     expect(user).toEqual(mockSession.user);
     // The client fetches get-session under the auth Worker's basePath.
-    expect(authCalls).toEqual(['https://auth.internal/auth/get-session?disableCookieCache=true']);
+    expect(authCalls).toEqual(['https://auth.localhost/auth/get-session?disableCookieCache=true']);
   });
 });

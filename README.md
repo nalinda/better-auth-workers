@@ -22,6 +22,7 @@ It is a thin layer. Better Auth's options, plugins and clients are all still you
 - [Migrations](#migrations)
 - [Routing](#routing)
 - [Local development](#local-development)
+- [Test mode](#test-mode)
 - [Compatibility](#compatibility)
 - [FAQ](#faq)
 - [Contributing](#contributing)
@@ -184,6 +185,7 @@ await authClient.phoneNumber.verify({ phoneNumber: '+15555550123', code: '123456
 | `idType`         | `'text' \| 'uuid'`                                                                       | `'text'`                 | How ids are generated. See [Custom schema and UUID ids](#custom-schema-and-uuid-ids).                                              |
 | `allowedMethods` | `Array<'phone' \| 'google' \| 'magic-link'>`                                             | all enabled              | **Deprecated.** Configure only the methods to accept instead. See [Restricting sign-in methods](#restricting-sign-in-methods).     |
 | `plugins`        | `BetterAuthPlugin[]`                                                                     | `[]`                     | Extra Better Auth plugins, appended after the built-in ones (`betterAuth.plugins` is appended the same way, never replacing them). |
+| `testMode`       | `{ otpCode?, google? }`                                                                  | off                      | Deterministic phone codes and a Google stub for end-to-end tests. Localhost only. See [Test mode](#test-mode).                     |
 | `betterAuth`     | `Partial<BetterAuthOptions>` (loose for `database`/`plugins`/`secondaryStorage`/`hooks`) | `{}`                     | Escape hatch. Merged last, so it can override anything above.                                                                      |
 | `ctx`            | `WaitUntilContext`                                                                       | none                     | Fallback context for `waitUntil` work; `auth.handler(request, ctx)` takes precedence.                                              |
 
@@ -503,6 +505,32 @@ Cross-origin deployments work with Better Auth's `trustedOrigins` and cross-subd
 - **OTP**: a `sendOTP` that logs the code to the console is enough for local work. Do not ship it.
 
 The `examples/hono` directory contains a runnable auth Worker with both storage options, plus a second API Worker that consumes its sessions over a service binding; its README covers running both together.
+
+## Test mode
+
+An end-to-end suite (Playwright, say) can't read a real SMS or sign in to a real Google account. Test mode replaces both with deterministic stand-ins:
+
+```ts
+createAuth(env, {
+  phone: { sendOTP },
+  google: true,
+  // Only in the environment the e2e suite runs against.
+  testMode: env.MOCK_AUTH ? { otpCode: '123456', google: true } : undefined,
+});
+```
+
+- **`otpCode`** (4 to 10 digits): every phone verification accepts this code, and `sendOTP` is never called. The attempt limit and expiry don't apply, because no stored code is checked. Requires `phone`.
+- **`google`**: Google sign-in goes through an in-process stub instead of Google. The client calls `authClient.signIn.social({ provider: 'google', loginHint: 'alice@example.com' })` exactly as in production. The stub's authorize page redirects straight back and signs in the address named by `loginHint`, with a stable account id (`test-<email>`), or `test.user@example.com` without one. A `loginHint` of `error:access_denied` (or any `error:<code>`) comes back as a refused consent screen does; any other hint must be an email address. No Google credentials are needed, and nothing leaves the Worker. The stub replaces Google entirely, so Google-specific options (`prompt`, `hd`, `disableImplicitSignUp`) don't apply, and sign-in with a Google ID token (`signIn.social({ provider: 'google', idToken })`) isn't supported.
+
+Both let anyone sign in as anyone, so test mode only runs on localhost:
+
+- `createAuth` throws at startup unless every base URL it could use (`baseURL`, `env.AUTH_BASE_URL`, `betterAuth.baseURL`) is `http://` on a loopback host: `localhost`, `*.localhost`, `127.x.x.x` or `[::1]`.
+- While test mode is on, the instance refuses every call that names a host other than a loopback one, on any route, with a 403 (`TEST_MODE_LOCALHOST_ONLY`). Requests into `auth.handler` are judged by their URL. Server-side `auth.api` calls that forward headers (`auth.api.x({ body, headers: request.headers })`) are judged by `host` and `x-forwarded-host`, and refused if the headers name no host at all. That holds even if a deployed Worker were started with a localhost base URL. Only a server-side call with no headers, the Worker's own code, is let through.
+- `testMode.otpCode` requires `phone`, and `testMode.google` requires `google`: test mode stands in for methods the deployment has, and never adds one.
+- Anything that forwards requests to a test-mode auth Worker (a gateway, a service binding) must keep a loopback or `*.localhost` host in the URL: pass the request through as it is rather than rebuilding it on another hostname, or test mode answers 403, which a session client reads as "signed out". `createSessionClient` already sends its requests as `https://auth.localhost/...`.
+- `wrangler dev` rewrites every request's host to the Worker's first `route` or `routes` entry (or custom domain), if its config has one, and both keys are inherited by named environments. Test mode then refuses everything with 403 while the startup guard passes. To keep localhost for the e2e environment: pass `--local-upstream localhost:8787` to `wrangler dev`, or give that environment its own empty value for whichever of `route`/`routes` the top level sets. Setting `dev.host` to `localhost` also works, but `dev` is read only from the top level, so it applies to every `wrangler dev`.
+- It checks the host a request names, not where it came from. That is enough behind the startup guard, since a deployed route never names a loopback host, but don't run `wrangler dev --ip 0.0.0.0` with test mode on a network you don't trust.
+- A warning is logged once per isolate while it is on.
 
 ## Compatibility
 
