@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Installs the packed tarball into a fresh Bun project, the way a consumer
 # pinning a release asset does, and imports every entry point. Catches a
-# tarball that is missing `dist/`, an `exports` map that points at nothing,
-# and an install-time script that fails outside this repository.
+# tarball that is missing `dist/` or an `exports` map that points at nothing.
+# The package must not need install-time scripts (consumers would have to
+# trust it for them to run), so any in the packed package.json fail the
+# check; the consumer trusts the package anyway, so a lifecycle script Bun
+# does run on install still gets exercised.
 #
 # Usage: scripts/check-packed-install.sh [path/to/better-auth-workers-x.y.z.tgz]
 # Without an argument it packs the current tree (run `bun run build` first).
@@ -25,10 +28,14 @@ better_auth_version="$(cd "$root" && bun -e "console.log(require('better-auth/pa
 cd "$workdir"
 mkdir consumer
 cd consumer
-echo '{ "name": "consumer", "private": true, "type": "module" }' > package.json
+echo '{ "name": "consumer", "private": true, "type": "module", "trustedDependencies": ["better-auth-workers"] }' > package.json
 bun add "$tarball" "better-auth@$better_auth_version" >/dev/null
 
 cat > check.ts <<'TS'
+const manifest = await Bun.file('node_modules/better-auth-workers/package.json').json();
+for (const hook of ['preinstall', 'install', 'postinstall']) {
+  if (manifest.scripts?.[hook]) throw new Error(`the packed package.json declares a ${hook} script`);
+}
 const root = await import('better-auth-workers');
 const client = await import('better-auth-workers/client');
 if (typeof root.createAuth !== 'function') throw new Error('createAuth is not exported');

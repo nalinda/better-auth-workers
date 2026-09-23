@@ -14,6 +14,17 @@ name: Release
 #      published automatically by this workflow.
 #   4. Provenance (`npm publish --provenance`) uses GitHub Actions OIDC via
 #      `permissions: id-token: write` below and needs no additional secrets.
+#
+# The release is drafted with the packed tarball attached. Consumers install
+# it from the asset's download URL, which only resolves once a maintainer
+# publishes the draft.
+#
+# Three jobs, so that nothing unlocked runs next to the release credentials:
+# `build` packs the tarball from the locked install, `check-tarball` installs
+# it into a fresh consumer project (which resolves better-auth's dependencies
+# from the registry, unlocked) with read-only permissions, and `release` —
+# the only job that can write releases or mint an OIDC token — runs no
+# dependency code at all and refuses a tarball whose checksum changed.
 
 on:
   push:
@@ -21,18 +32,22 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 jobs:
-  release:
-    name: Release
+  build:
+    name: Build and pack
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tarball: ${{ steps.pack.outputs.tarball }}
+      sha256: ${{ steps.pack.outputs.sha256 }}
     steps:
       - uses: actions/checkout@v7
-        # Nothing in this job pushes back to the repository, so the checkout
-        # credentials are not persisted into .git/config where every later
-        # step (and anything they run) could read them.
+        # Nothing in this workflow pushes back to the repository, so the
+        # checkout credentials are not persisted into .git/config where every
+        # later step (and anything they run) could read them.
         with:
           persist-credentials: false
       - uses: ./.github/actions/bun-install
@@ -57,16 +72,65 @@ jobs:
       # The exact bytes every channel ships: attached to the GitHub release
       # (consumers pin its download URL) and, when configured, published to
       # npm. `--ignore-scripts` because `prepare` already ran during install.
+      # The checksum lets the release job refuse a tarball that changed after
+      # this point.
       - name: Pack
         id: pack
         run: |
           TARBALL="$(npm pack --ignore-scripts --silent)"
           echo "tarball=${TARBALL}" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "$TARBALL" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package-tarball
+          path: ${{ steps.pack.outputs.tarball }}
+          if-no-files-found: error
+
+  check-tarball:
+    name: Check the packed tarball installs and imports
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # The locked install supplies the better-auth version the check pins.
+      - uses: ./.github/actions/bun-install
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: package-tarball
 
       - name: Check the packed tarball installs and imports
         env:
-          TARBALL: ${{ steps.pack.outputs.tarball }}
+          TARBALL: ${{ needs.build.outputs.tarball }}
         run: scripts/check-packed-install.sh "$TARBALL"
+
+  release:
+    name: Release
+    needs: [build, check-tarball]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      # Only for CHANGELOG.md. No dependencies are installed in this job.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: package-tarball
+
+      - name: Verify the tarball is the one that was packed and checked
+        env:
+          TARBALL: ${{ needs.build.outputs.tarball }}
+          EXPECTED_SHA256: ${{ needs.build.outputs.sha256 }}
+        run: echo "${EXPECTED_SHA256}  ${TARBALL}" | sha256sum --check --strict
 
       - name: Generate release notes
         id: release-notes
@@ -87,7 +151,7 @@ jobs:
       - name: Draft GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TARBALL: ${{ steps.pack.outputs.tarball }}
+          TARBALL: ${{ needs.build.outputs.tarball }}
         run: |
           gh release create "${GITHUB_REF_NAME}" \
             --draft \
@@ -126,5 +190,5 @@ jobs:
         if: ${{ steps.npm-auth.outputs.configured == 'true' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          TARBALL: ${{ steps.pack.outputs.tarball }}
+          TARBALL: ${{ needs.build.outputs.tarball }}
         run: npm publish "$TARBALL" --provenance --access public

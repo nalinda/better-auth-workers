@@ -59,7 +59,7 @@ npm install better-auth better-auth-workers
 npm install -D @cloudflare/workers-types
 ```
 
-Until the package is on npm, install the tarball attached to a [GitHub release](https://github.com/nalinda/better-auth-workers/releases). It is the same file npm would serve, with `dist/` already built, so there is no build step and no install script. Pin the exact version in the URL:
+Until the package is on npm, install the tarball attached to a [GitHub release](https://github.com/nalinda/better-auth-workers/releases) (v0.4.0 and later carry one). It is the same file npm would serve, with `dist/` already built, so there is no build step and no install script. Pin the exact version in the URL:
 
 ```sh
 bun add https://github.com/nalinda/better-auth-workers/releases/download/v0.4.0/better-auth-workers-0.4.0.tgz
