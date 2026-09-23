@@ -279,6 +279,63 @@ describe('phone.awaitDelivery', () => {
     expect(await verified.json()).toMatchObject({ code: 'OTP_NOT_FOUND' });
   });
 
+  // Better Auth stores the number hashed; the cleanup must find its rows by
+  // the stored identifier, not the raw number.
+  it('leaves the previous code working after a failed resend with hashed identifiers', async () => {
+    const codes: string[] = [];
+    const auth = createAuth(buildEnv({ DB: undefined, AUTH_KV: new FakeKV().asBinding() }), {
+      phone: {
+        awaitDelivery: true,
+        sendOTP: ({ code }) => {
+          codes.push(code);
+          if (codes.length === 2) throw new Error('gateway down');
+        },
+      },
+      betterAuth: { database: migratedSqlite(), verification: { storeIdentifier: 'hashed' } },
+    });
+
+    await sendOtp(auth);
+    await sendOtp(auth);
+    const withUndelivered = await verify(auth, codes[1] ?? '');
+    const withDelivered = await verify(auth, codes[0] ?? '');
+
+    expect(withUndelivered.status).toBe(400);
+    expect(withDelivered.status).toBe(200);
+  });
+
+  // The consumer's own store holds a copy of the newest code beside the
+  // database; the undelivered copy goes too, so the code is simply not found.
+  it("deletes the consumer store's copy too when codes are also in the database", async () => {
+    const store = new Map<string, string>();
+    const secondaryStorage = {
+      get: (key: string) => store.get(key) ?? null,
+      set: (key: string, value: string) => {
+        store.set(key, value);
+      },
+      delete: (key: string) => {
+        store.delete(key);
+      },
+      increment: () => 1,
+    };
+    const codes: string[] = [];
+    const auth = createAuth(buildEnv({ DB: undefined, AUTH_KV: new FakeKV().asBinding() }), {
+      phone: {
+        awaitDelivery: true,
+        sendOTP: ({ code }) => {
+          codes.push(code);
+          throw new Error('gateway down');
+        },
+      },
+      betterAuth: { database: migratedSqlite(), secondaryStorage },
+    });
+
+    await sendOtp(auth);
+    const verified = await verify(auth, codes[0] ?? '');
+
+    expect(store.keys().some((key) => key.startsWith('verification:'))).toBe(false);
+    expect(await verified.json()).toMatchObject({ code: 'OTP_NOT_FOUND' });
+  });
+
   it('still answers 502 OTP_DELIVERY_FAILED when deleting the undelivered code fails', async () => {
     const db = migratedSqlite();
     const sendOTP: CreateAuthPhoneOptions['sendOTP'] = () => {

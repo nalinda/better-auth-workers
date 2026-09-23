@@ -84,7 +84,8 @@ function logRedacted(error: unknown, code: string): void {
 // becomes the current one again. The stored value is `<code>:<attempts>`.
 // When a consumer keeps codes out of the database (their own secondary
 // storage with `storeInDatabase: false`), each number holds one code, and it
-// is removed if it is still this one. The delete is best-effort, so a
+// is removed if it is still this one; with their own secondary storage and
+// the database both holding codes, the store's copy goes too. The delete is best-effort, so a
 // database error can't replace the delivery error the client needs. A
 // refusal the consumer raised on purpose (OTPDeliveryError) is not logged;
 // anything else is, with the code redacted.
@@ -107,6 +108,29 @@ async function deleteUndeliveredCode(ctx: SendOTPContext, data: SendOTPData): Pr
       { field: 'value', operator: 'starts_with', value: `${data.code}:` },
     ],
   });
+  await deleteStoredCopy(ctx, stored.identifier, data.code);
+}
+
+// A consumer's own secondary storage keeps its copy of the newest code under
+// `verification:<identifier>`. (The package's KV storage holds none.)
+async function deleteStoredCopy(
+  ctx: NonNullable<SendOTPContext>,
+  identifier: string,
+  code: string
+): Promise<void> {
+  const storage = ctx.context.secondaryStorage;
+  if (!storage) return;
+  const key = `verification:${identifier}`;
+  const raw = await storage.get(key);
+  if (typeof raw !== 'string') return;
+  let copy: unknown;
+  try {
+    copy = JSON.parse(raw);
+  } catch {
+    return;
+  }
+  const value = (copy as { value?: unknown } | null)?.value;
+  if (typeof value === 'string' && value.startsWith(`${code}:`)) await storage.delete(key);
 }
 
 async function deliverAwaited(
