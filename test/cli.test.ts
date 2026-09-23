@@ -33,12 +33,15 @@ describe('better-auth-workers CLI', () => {
     expect(stdout).not.toContain('create schema');
   });
 
-  it('prints usage and succeeds for --help', () => {
-    const { exitCode, stdout } = run('--help');
+  for (const args of [['--help'], ['sql', '--help'], ['sql', '-h']]) {
+    it(`prints usage and succeeds for ${args.join(' ')}`, () => {
+      const { exitCode, stdout } = run(...args);
 
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain('Usage: better-auth-workers sql');
-  });
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain('Usage: better-auth-workers sql');
+      expect(stdout).not.toContain('create table');
+    });
+  }
 
   for (const [label, args, message] of [
     ['no command', [], /Usage/],

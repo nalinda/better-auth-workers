@@ -38,10 +38,15 @@ const process = nodeProcess as unknown as CliProcess;
 async function sqlCommand(args: string[]): Promise<string> {
   const { values } = parseArgs({
     args,
-    options: { schema: { type: 'string' }, 'id-type': { type: 'string' } },
+    options: {
+      schema: { type: 'string' },
+      'id-type': { type: 'string' },
+      help: { type: 'boolean', short: 'h' },
+    },
     strict: true,
     allowPositionals: false,
   });
+  if (values.help) return USAGE;
   const { schema } = values;
   const idType = values['id-type'] ?? 'text';
   if (!isIdType(idType)) {

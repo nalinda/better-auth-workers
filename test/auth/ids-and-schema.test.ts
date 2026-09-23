@@ -110,6 +110,7 @@ describe('database.schema on Postgres', () => {
       '1auth',
       '',
       'a'.repeat(64),
+      'pg_auth',
     ]) {
       expect(() => hyperdriveAuth({ pg, database: { schema } })).toThrow(
         /database\.schema must be a lower-case Postgres identifier/

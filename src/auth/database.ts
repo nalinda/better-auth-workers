@@ -20,12 +20,13 @@ interface BuildDatabaseResult {
 
 // A Postgres schema name as the generator and Better Auth's `schemaName`
 // accept it: an unquoted lower-case identifier, within Postgres's 63-byte
-// limit, so the same name works quoted in the SQL and in every query.
+// limit, so the same name works quoted in the SQL and in every query. The
+// `pg_` prefix is reserved for system schemas, and `create schema` refuses it.
 const SCHEMA_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
 
 export function schemaNameProblem(schema: string, label = 'database.schema'): string | undefined {
-  if (SCHEMA_NAME.test(schema)) return;
-  return `${label} must be a lower-case Postgres identifier (letters, digits and underscores, starting with a letter or underscore, at most 63 characters), got ${JSON.stringify(schema)}`;
+  if (SCHEMA_NAME.test(schema) && !schema.startsWith('pg_')) return;
+  return `${label} must be a lower-case Postgres identifier (letters, digits and underscores, starting with a letter or underscore, at most 63 characters, not starting with pg_), got ${JSON.stringify(schema)}`;
 }
 
 // With a schema, Better Auth is handed its dialect form rather than the bare

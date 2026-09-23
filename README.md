@@ -474,9 +474,11 @@ Generate the SQL for those options with the package's CLI, and apply it like the
 bunx better-auth-workers sql --schema auth_ba --id-type uuid > migrations/0001_auth.sql
 ```
 
-The output comes from Better Auth's own migration generator, for the same plugins as the shipped SQL. With no options it prints exactly the shipped `migrations/postgres/0001_init.sql`.
+The output comes from Better Auth's own migration generator, for the same plugins as the shipped SQL. With no options it prints the same statements as the shipped `migrations/postgres/0001_init.sql`. Schema names starting with `pg_` are reserved by Postgres and refused.
 
 On D1 there are no schemas, so `database.schema` is rejected. `idType: 'uuid'` works with the shipped SQLite migration as is: Better Auth generates each UUID itself and stores it in the `text` id column.
+
+With `idType: 'uuid'` on Postgres, an id that is not a UUID sent to an endpoint that takes one (an admin endpoint's `userId`, say) reaches Postgres as is and fails there with a 500, where a text id would have been a 404.
 
 Changing `idType` on an existing database changes how new ids are made, not the ones already stored. On Postgres, moving from `text` to `uuid` also means migrating the columns yourself.
 

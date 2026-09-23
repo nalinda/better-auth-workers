@@ -54,3 +54,9 @@ for (const dir of ['migrations/postgres', 'migrations/sqlite']) {
 console.log('packed install OK');
 TS
 bun check.ts
+
+# The CLI as consumers run it: the installed bin, under Node.
+node node_modules/.bin/better-auth-workers sql --schema auth_ba --id-type uuid > generated.sql
+grep -q 'create schema if not exists "auth_ba";' generated.sql
+grep -q '"id" uuid default pg_catalog.gen_random_uuid()' generated.sql
+echo 'packed CLI OK'

@@ -254,7 +254,7 @@ describe('generatePostgresSql', () => {
   });
 
   it('refuses a schema name it could not safely quote', async () => {
-    for (const schema of ['auth"ba', 'Auth', 'auth ba', '']) {
+    for (const schema of ['auth"ba', 'Auth', 'auth ba', '', 'pg_auth']) {
       const error = await rejectionOf(generatePostgresSql({ schema }));
       expect(String(error)).toMatch(/schema must be/);
     }
