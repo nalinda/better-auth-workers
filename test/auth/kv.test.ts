@@ -56,20 +56,37 @@ describe('KV secondary storage for session cache and rate limiter', () => {
       expect(envKv.puts).toHaveLength(0);
     });
 
-    it('implements getAndDelete on secondaryStorage so one-shot verification values are consumed', async () => {
+    it('implements getAndDelete on secondaryStorage as a read then a delete', async () => {
       const mockKv = new FakeKV();
       const auth = createAuth(buildEnv(), { kv: mockKv });
       const storage = secondaryStorageOf(auth);
 
-      await storage.set('verification:otp', 'code', 300);
-      const consumed = await storage.getAndDelete('verification:otp');
-      expect(consumed).toBe('code');
-      expect(mockKv.deletes).toContain('verification:otp');
-      expect(await storage.get('verification:otp')).toBeNull();
+      await storage.set('one-shot', 'value', 300);
+      const consumed = await storage.getAndDelete('one-shot');
+      expect(consumed).toBe('value');
+      expect(mockKv.deletes).toContain('one-shot');
+      expect(await storage.get('one-shot')).toBeNull();
 
-      const missing = await storage.getAndDelete('verification:missing');
+      const missing = await storage.getAndDelete('missing');
       expect(missing).toBeNull();
-      expect(mockKv.deletes).not.toContain('verification:missing');
+      expect(mockKv.deletes).not.toContain('missing');
+    });
+
+    // Verification values go to the primary database instead (see
+    // test/auth/verification-storage.test.ts); KV never sees them.
+    it('declines verification values, so they never reach KV', async () => {
+      const mockKv = new FakeKV();
+      const auth = createAuth(buildEnv(), { kv: mockKv });
+      const storage = secondaryStorageOf(auth);
+
+      await storage.set('verification:+15550000001', 'code', 300);
+      expect(await storage.get('verification:+15550000001')).toBeNull();
+      expect(await storage.getAndDelete('verification:+15550000001')).toBeNull();
+      await storage.delete('verification:+15550000001');
+
+      expect(mockKv.puts).toEqual([]);
+      expect(mockKv.gets).toEqual([]);
+      expect(mockKv.deletes).toEqual([]);
     });
 
     it('implements increment on secondaryStorage for distributed rate limiting', async () => {

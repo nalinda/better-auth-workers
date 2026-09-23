@@ -1,4 +1,5 @@
 import type { AuthEnv } from '../types';
+import { verificationStorageProblem } from './config';
 import { databaseProblem } from './database';
 import { resolveBaseURL, resolveSecret } from './env';
 import { kvProblem } from './kv';
@@ -19,6 +20,8 @@ function collectConfigProblems(options?: CreateAuthOptions, env?: Partial<AuthEn
   if (dbProblem) problems.push(dbProblem);
   const kvMissing = kvProblem(options, env);
   if (kvMissing) problems.push(kvMissing);
+  const verificationProblem = verificationStorageProblem(options);
+  if (verificationProblem) problems.push(verificationProblem);
   problems.push(...googleCredentialProblems(options, env), ...testModeProblems(options, env));
   const idType: unknown = options?.idType;
   if (idType !== undefined && idType !== 'text' && idType !== 'uuid') {

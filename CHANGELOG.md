@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Verification values (phone OTP codes, magic-link tokens, OAuth state) are now stored in the primary database's `verification` table instead of KV (`verification.storeInDatabase` on; the KV storage declines them). On KV, a wrong OTP guess could lose the code, because Better Auth rewrites it within the same second and KV refuses a second write to a key within a second; and a magic link opened twice at the same moment could sign in twice. `betterAuth.verification.storeInDatabase: false` is refused with the package's KV storage. Codes and links issued before the upgrade stop working, and a Google sign-in in progress at deploy fails with `state_mismatch`; start again. A consumer with their own `betterAuth.secondaryStorage` also gets `storeInDatabase: true` by default now, so verification values are written to both their storage and the database unless they set it to `false`. After a magic link is sent, expired verification rows are deleted (at most every ten minutes per isolate), since Better Auth's own sweep only runs on phone and OAuth lookups.
 - `prepare` exits before running husky when the package directory is not a git checkout, instead of failing on devDependencies that are not installed there. Installing from a git URL is still not supported, since `dist/` is not committed; use the release tarball.
 
 ## [0.3.0] - 2026-09-23
