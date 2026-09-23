@@ -32,25 +32,37 @@ async function withRateLimitCode(response: Response): Promise<Response> {
 
 // An unexpected failure (a database or KV error Better Auth didn't catch)
 // answers 500 with an empty body, which a UI calling `res.json()` can't
-// parse. It gains `code: 'INTERNAL_ERROR'`. A 5xx with a body of its own
-// (an OTPDeliveryError's 502, say) is left as it is.
-async function withInternalErrorCode(response: Response): Promise<Response> {
-  if (response.status < 500) return response;
-  const text = await response.clone().text();
-  if (text.length > 0) return response;
-  const headers = new Headers(response.headers);
+// parse, or escapes the handler altogether (a KV error in the rate limiter
+// throws before any endpoint runs). Both become a JSON 500 with
+// `code: 'INTERNAL_ERROR'`. A 5xx with a body of its own (Better Auth's
+// FAILED_TO_* codes, an OTPDeliveryError's 502) is left as it is.
+function internalError(status = 500, init: ResponseInit = {}): Response {
+  const headers = new Headers(init.headers);
   headers.delete('content-length');
   headers.set('content-type', 'application/json');
   return Response.json(
     { code: INTERNAL_ERROR, message: 'Internal error' },
-    { status: response.status, statusText: response.statusText, headers }
+    { status, statusText: init.statusText, headers }
   );
+}
+
+async function withInternalErrorCode(response: Response): Promise<Response> {
+  if (response.status < 500) return response;
+  const text = await response.clone().text();
+  if (text.length > 0) return response;
+  return internalError(response.status, response);
 }
 
 export function withErrorCodes(instance: HandlerHost): void {
   const originalHandler = instance.handler.bind(instance);
   instance.handler = async (request: Request, ctx?: WaitUntilContext) => {
-    const response = await originalHandler(request, ctx);
+    let response: Response;
+    try {
+      response = await originalHandler(request, ctx);
+    } catch (error) {
+      console.error('better-auth-workers: unhandled error in the auth handler', error);
+      return internalError();
+    }
     return withInternalErrorCode(await withRateLimitCode(response));
   };
 }

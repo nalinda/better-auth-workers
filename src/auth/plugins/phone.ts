@@ -83,6 +83,17 @@ function logRedacted(error: unknown, code: string): void {
 // refused delete must not replace the delivery error the client needs. A
 // refusal the consumer raised on purpose (OTPDeliveryError) is not logged;
 // anything else is, with the code redacted.
+// The stored value is `<code>:<attempts>`. A resend that raced this one may
+// already have replaced it with a newer code, which is on its way to the
+// user and must not be deleted along with this undelivered one.
+async function deleteIfStillStored(ctx: SendOTPContext, data: SendOTPData): Promise<void> {
+  const adapter = ctx?.context.internalAdapter;
+  if (!adapter) return;
+  const stored = await adapter.findVerificationValue(data.phoneNumber);
+  if (!stored?.value.startsWith(`${data.code}:`)) return;
+  await adapter.deleteVerificationByIdentifier(data.phoneNumber);
+}
+
 async function deliverAwaited(
   send: () => Promise<void> | void,
   data: SendOTPData,
@@ -92,7 +103,7 @@ async function deliverAwaited(
     await send();
   } catch (error) {
     try {
-      await ctx?.context.internalAdapter.deleteVerificationByIdentifier(data.phoneNumber);
+      await deleteIfStillStored(ctx, data);
     } catch (cleanupError) {
       logRedacted(cleanupError, data.code);
     }

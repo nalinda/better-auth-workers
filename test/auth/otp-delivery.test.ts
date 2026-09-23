@@ -191,6 +191,35 @@ describe('phone.awaitDelivery', () => {
     expect(await verified.json()).toMatchObject({ code: 'OTP_NOT_FOUND' });
   });
 
+  // A double-tapped resend: the first send fails only after the second has
+  // stored (and delivered) a newer code, which must survive the first's
+  // cleanup.
+  it('does not delete a newer code from a resend when an earlier send fails', async () => {
+    const { promise: firstMayFail, resolve: letFirstFail } = Promise.withResolvers<void>();
+    const codes: string[] = [];
+    let sends = 0;
+    const sendOTP: CreateAuthPhoneOptions['sendOTP'] = async ({ code }) => {
+      sends += 1;
+      codes.push(code);
+      if (sends === 1) {
+        await firstMayFail;
+        throw new Error('provider timeout');
+      }
+    };
+    const auth = awaitedAuth(sendOTP);
+
+    const first = sendOtp(auth);
+    await Bun.sleep(20);
+    const second = await sendOtp(auth);
+    letFirstFail();
+    const failed = await first;
+
+    expect(second.status).toBe(200);
+    expect(failed.status).toBe(502);
+    const verified = await verify(auth, codes[1] ?? '');
+    expect(verified.status).toBe(200);
+  });
+
   it('still answers 502 OTP_DELIVERY_FAILED when deleting the undelivered code is refused', async () => {
     const { sendOTP } = recordingSendOTP(() => {
       throw new Error('gateway down');

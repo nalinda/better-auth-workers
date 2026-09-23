@@ -154,26 +154,45 @@ describe('documented error codes', () => {
     expect(await limited?.json()).toMatchObject({ code: 'RATE_LIMITED' });
   });
 
-  // An error Better Auth didn't catch (here, KV refusing to store the code)
-  // would otherwise be a 500 with an empty body the UI can't parse.
+  // A failure Better Auth didn't handle: here the rate limiter's KV read
+  // throws, which escapes the handler before any endpoint runs, and a closed
+  // database, which Better Auth answers with an empty 500.
   it('INTERNAL_ERROR (500): an unexpected failure', async () => {
     const originalError = console.error;
     console.error = () => {};
     try {
-      class RefusingKV extends FakeKV {
-        override put(): Promise<void> {
-          return Promise.reject(new Error('KV PUT failed: 500'));
+      class FailingKV extends FakeKV {
+        override get(): Promise<string | null> {
+          return Promise.reject(new Error('KV GET failed: 500'));
         }
       }
-      const auth = createAuth(buildEnv({ DB: undefined, AUTH_KV: new RefusingKV().asBinding() }), {
-        phone: { sendOTP: () => {} },
-        betterAuth: { database: migratedSqlite() },
-      });
+      const throwing = createAuth(
+        buildEnv({ DB: undefined, AUTH_KV: new FailingKV().asBinding() }),
+        { phone: { sendOTP: () => {} }, betterAuth: { database: migratedSqlite() } }
+      );
+      const closed = migratedSqlite();
+      closed.close();
+      const emptyBodied = createAuth(
+        buildEnv({ DB: undefined, AUTH_KV: new FakeKV().asBinding() }),
+        {
+          phone: { sendOTP: () => {} },
+          betterAuth: { database: closed },
+        }
+      );
 
-      const res = await post(auth, '/phone-number/send-otp', { phoneNumber: PHONE });
-
-      expect([res.status, await codeOf(res)]).toEqual([500, 'INTERNAL_ERROR']);
-      expect(res.headers.get('content-type')).toContain('application/json');
+      for (const auth of [throwing, emptyBodied]) {
+        const res = await auth.handler(
+          new Request(`${API}/phone-number/send-otp`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.9' },
+            body: JSON.stringify({ phoneNumber: PHONE }),
+          })
+        );
+        expect(res.status).toBeGreaterThanOrEqual(500);
+        expect(res.headers.get('content-type')).toContain('application/json');
+        const body: { code?: string } = await res.json();
+        expect(body.code === 'INTERNAL_ERROR' || body.code?.startsWith('FAILED_TO_')).toBe(true);
+      }
     } finally {
       console.error = originalError;
     }

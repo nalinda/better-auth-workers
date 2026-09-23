@@ -290,7 +290,7 @@ Service-binding calls stay inside Cloudflare's network and never traverse the pu
 By default `send-otp` answers `200` before `sendOTP` has run, so the user can't be told a code didn't go out. Set `awaitDelivery: true` to wait for `sendOTP` and report what happened:
 
 - If `sendOTP` resolves, the response is the usual `200`.
-- If it throws, the response is `502` with `code: 'OTP_DELIVERY_FAILED'`, and the error is logged with the code redacted. The package then tries to delete the undelivered code, but with codes in KV that delete usually won't take effect: KV accepts one write per second per key, and the code was written moments earlier. The undelivered code then stays stored, unknown to anyone and limited to `allowedAttempts` guesses, until it expires.
+- If it throws, the response is `502` with `code: 'OTP_DELIVERY_FAILED'`, and the error is logged with the code redacted. The undelivered code is deleted so it can't be verified, unless a resend has already replaced it with a newer code, which is left alone.
 - If it throws an `OTPDeliveryError`, the response carries that error's own code, message and status instead, plus `retryAfter` (whole seconds, in the body and as a `Retry-After` header) when you give one. Nothing is logged: it's a refusal you chose.
 
 Better Auth stores the new code before `sendOTP` runs, replacing any earlier code for that number. So a failure in `sendOTP` also means the user's previous code, if they had one, no longer works. Refusals you can decide on before sending, such as a per-number limit, belong in `beforeSendOTP` instead (below).
@@ -626,29 +626,27 @@ Schema changes in this package are always a major version bump.
 
 ## Error codes
 
-Every error response from the auth Worker's routes is JSON with a stable `code` to translate in the UI, and a `message` that is only for logs. An unexpected failure is a `500` with `code: 'INTERNAL_ERROR'`; only a request that matches no auth route (a wrong `basePath`, an unknown path, or the wrong HTTP method) gets Better Auth's empty `404`. (`requireSession` in your other Workers answers `401`, `403` and `503` in plain text; see [Requiring a verified phone for Google users](#requiring-a-verified-phone-for-google-users) for returning your own code.) Most come from Better Auth. `test/error-codes.test.ts` and `test/auth/otp-delivery.test.ts` produce the codes below through the real app, so the table stays accurate across Better Auth upgrades.
+Every error response from the auth Worker's routes is JSON with a stable `code` to translate in the UI, and a `message` that is only for logs. An unexpected failure is a `500` with `code: 'INTERNAL_ERROR'` (or one of Better Auth's own `FAILED_TO_*` codes, such as `FAILED_TO_GET_SESSION`); treat any 5xx as "try again". Only a request that matches no auth route (a wrong `basePath`, an unknown path, or the wrong HTTP method) gets Better Auth's empty `404`. (`requireSession` in your other Workers answers `401`, `403` and `503` in plain text; see [Requiring a verified phone for Google users](#requiring-a-verified-phone-for-google-users) for returning your own code.)
 
-| Situation                                        | Status | `code`                                 | Where                                                                            |
-| ------------------------------------------------ | ------ | -------------------------------------- | -------------------------------------------------------------------------------- |
-| Number isn't valid E.164                         | 400    | `INVALID_PHONE_NUMBER`                 | `send-otp` (on `verify`, a malformed number just finds no code: `OTP_NOT_FOUND`) |
-| Wrong code                                       | 400    | `INVALID_OTP`                          | `verify`                                                                         |
-| Code expired                                     | 400    | `OTP_EXPIRED`                          | `verify`                                                                         |
-| No code for this number (never sent, or used up) | 400    | `OTP_NOT_FOUND`                        | `verify`                                                                         |
-| Too many wrong codes; request a new one          | 403    | `TOO_MANY_ATTEMPTS`                    | `verify`                                                                         |
-| Number already belongs to another user           | 400    | `PHONE_NUMBER_EXIST`                   | `verify` with `updatePhoneNumber`                                                |
-| Code could not be delivered                      | 502    | `OTP_DELIVERY_FAILED`                  | `send-otp` with `awaitDelivery`, or a failing `beforeSendOTP`                    |
-| Your own refusal (`OTPDeliveryError`)            | yours  | yours, plus `retryAfter`               | `send-otp`, from `beforeSendOTP` or an awaited `sendOTP`                         |
-| Rate limited                                     | 429    | `RATE_LIMITED`, `X-Retry-After` header | any route (Better Auth's limiter, per client IP and route)                       |
-| Unexpected failure                               | 500    | `INTERNAL_ERROR`                       | any route (a database or KV error; treat as "try again")                         |
-| User is banned (phone sign-in)                   | 403    | `BANNED_USER`                          | `verify`                                                                         |
-| User is banned (Google sign-in)                  | 302    | `error=BANNED_USER`                    | redirect to `errorCallbackURL` (a query parameter, not JSON)                     |
-| Provider not configured on this Worker           | 404    | `PROVIDER_NOT_FOUND`                   | `sign-in/social`                                                                 |
-| Method refused by `allowedMethods` (deprecated)  | 403    | `SIGN_IN_METHOD_NOT_ALLOWED`           | that method's routes                                                             |
-| Google consent cancelled or refused              | 302    | `error=access_denied`                  | redirect to `errorCallbackURL` (a query parameter, not JSON)                     |
+| Situation                                        | Status | `code`                                           | Where                                                                            |
+| ------------------------------------------------ | ------ | ------------------------------------------------ | -------------------------------------------------------------------------------- |
+| Number isn't valid E.164                         | 400    | `INVALID_PHONE_NUMBER`                           | `send-otp` (on `verify`, a malformed number just finds no code: `OTP_NOT_FOUND`) |
+| Wrong code                                       | 400    | `INVALID_OTP`                                    | `verify`                                                                         |
+| Code expired                                     | 400    | `OTP_EXPIRED`                                    | `verify`                                                                         |
+| No code for this number (never sent, or used up) | 400    | `OTP_NOT_FOUND`                                  | `verify`                                                                         |
+| Too many wrong codes; request a new one          | 403    | `TOO_MANY_ATTEMPTS`                              | `verify`                                                                         |
+| Number already belongs to another user           | 400    | `PHONE_NUMBER_EXIST`                             | `verify` with `updatePhoneNumber`                                                |
+| Code could not be delivered                      | 502    | `OTP_DELIVERY_FAILED`                            | `send-otp` with `awaitDelivery`, or a failing `beforeSendOTP`                    |
+| Your own refusal (`OTPDeliveryError`)            | yours  | yours, plus `retryAfter`                         | `send-otp`, from `beforeSendOTP` or an awaited `sendOTP`                         |
+| Rate limited                                     | 429    | `RATE_LIMITED`, `X-Retry-After` header           | any route (Better Auth's limiter, per client IP and route)                       |
+| Unexpected failure                               | 500    | `INTERNAL_ERROR`, or Better Auth's `FAILED_TO_*` | any route (a database or KV error; treat any 5xx as "try again")                 |
+| User is banned (phone sign-in)                   | 403    | `BANNED_USER`                                    | `verify`                                                                         |
+| User is banned (Google sign-in)                  | 302    | `error=BANNED_USER`                              | redirect to `errorCallbackURL` (a query parameter, not JSON)                     |
+| Provider not configured on this Worker           | 404    | `PROVIDER_NOT_FOUND`                             | `sign-in/social`                                                                 |
+| Method refused by `allowedMethods` (deprecated)  | 403    | `SIGN_IN_METHOD_NOT_ALLOWED`                     | that method's routes                                                             |
+| Google consent cancelled or refused              | 302    | `error=access_denied`                            | redirect to `errorCallbackURL` (a query parameter, not JSON)                     |
 
 After `allowedAttempts` wrong codes (3 by default) a code stops working (`TOO_MANY_ATTEMPTS`), and requesting a new one starts over, so that code carries no retry time. Requesting codes is limited by the rate limiter and by your own `beforeSendOTP`. `X-Retry-After` is in seconds; with the limiter's counts in KV it reports the whole window rather than the time left in it.
-
-With codes in KV, a wrong guess has a weakness: Better Auth records it by deleting the stored code and writing it back with the attempt counted, and KV can refuse that second write within a second of the first. The request then fails and the code is gone, so the user needs a new one. Keep that in mind when choosing a per-number resend limit in `beforeSendOTP`.
 
 Most other Google callback failures arrive the same way as `access_denied`, as an `error` query parameter on `errorCallbackURL`. Failures before the sign-in's state can be read (`state_not_found`, an invalid callback request) can't know that URL, and go to Better Auth's error page (`onAPIError.errorURL`, or `<basePath>/error`) instead.
 
