@@ -25,8 +25,9 @@ name: Release
 # from the registry, unlocked) with read-only permissions, and `release` —
 # the only job that can write releases or mint an OIDC token — runs no
 # dependency code at all and refuses a tarball whose checksum changed. No
-# job uses the shared dependency cache, so nothing another workflow wrote
-# into it can reach what is built and shipped.
+# job restores or saves any cache (neither dependencies nor the bun binary
+# setup-bun caches by default), so nothing a job that ran unlocked code
+# wrote can reach what is built and shipped.
 
 on:
   push:
@@ -55,6 +56,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
+          # setup-bun caches the bun binary by default, and a restored
+          # binary is only checked by `bun --revision`; see the header.
+          no-cache: true
 
       # Deliberately uncached: a restored node_modules is trusted as is by a
       # frozen install, so a cache written by any job that ran unlocked code
@@ -111,6 +115,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
+          # setup-bun caches the bun binary by default, and a restored
+          # binary is only checked by `bun --revision`; see the header.
+          no-cache: true
 
       # The locked install supplies the better-auth version the check pins.
       # Uncached, like every job here, so the unlocked install below cannot

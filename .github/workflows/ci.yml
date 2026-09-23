@@ -59,8 +59,8 @@ jobs:
   # installed into a fresh Bun project, with every entry point imported.
   # That install resolves better-auth's dependencies from the registry with
   # no lockfile and runs them, so this job touches no shared cache: it
-  # neither restores nor saves node_modules or Bun's download cache, and
-  # nothing it resolves can reach a later build.
+  # neither restores nor saves node_modules, Bun's download cache or the bun
+  # binary, and nothing it resolves can reach a later build.
   packed-install:
     name: Packed tarball installs
     runs-on: ubuntu-latest
@@ -71,6 +71,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
+          # Not even the bun binary: setup-bun would otherwise save it after
+          # the unlocked install below has run, for later builds to restore.
+          no-cache: true
 
       - name: Install dependencies (uncached)
         run: bun install --frozen-lockfile

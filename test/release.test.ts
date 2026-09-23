@@ -195,6 +195,19 @@ describe('Release workflow', () => {
     }
   });
 
+  // setup-bun caches the bun binary by default and saves it after every
+  // other step, checking a restored one only with `bun --revision`; a binary
+  // replaced by unlocked code would then build the next release.
+  it('never caches the bun binary', () => {
+    const setups = allJobs()
+      .flatMap((job) => job.steps ?? [])
+      .filter((s) => (s.uses ?? '').startsWith('oven-sh/setup-bun'));
+    expect(setups).toHaveLength(2);
+    for (const step of setups) {
+      expect(step.with?.['no-cache']).toBe(true);
+    }
+  });
+
   it('runs no dependency code in the release job', () => {
     for (const step of stepsOf('release')) {
       expect(step.uses ?? '').not.toContain('bun-install');

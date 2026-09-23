@@ -6,6 +6,7 @@ import { describe, expect, it } from 'bun:test';
 interface Step {
   run?: string;
   uses?: string;
+  with?: Record<string, unknown>;
   env?: Record<string, string>;
 }
 
@@ -72,5 +73,8 @@ describe('CI checks the packed tarball without touching shared caches', () => {
       expect(step.uses ?? '').not.toContain('bun-install');
       expect(step.uses ?? '').not.toMatch(/^actions\/cache/);
     }
+    const setups = steps.filter((step) => (step.uses ?? '').startsWith('oven-sh/setup-bun'));
+    expect(setups).toHaveLength(1);
+    expect(setups.at(0)?.with?.['no-cache']).toBe(true);
   });
 });
