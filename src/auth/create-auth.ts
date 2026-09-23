@@ -20,6 +20,7 @@ import {
   resolveHyperdriveConnectionString,
 } from './database';
 import { resolveBaseURL, resolveSecret } from './env';
+import { withErrorCodes } from './error-codes';
 import { getOptionsKey } from './options-key';
 import { buildPlugins, buildSocialProviders } from './plugins';
 import { withPoolLifecycle } from './postgres-pool';
@@ -265,6 +266,7 @@ export function createAuth<O extends CreateAuthOptions = CreateAuthOptions>(
   void instance.$context.catch(() => {});
 
   withHandlerContext(instance, ctxRef);
+  withErrorCodes(instance, options);
 
   if (pool) {
     withPoolLifecycle(instance, pool, ctxRef);

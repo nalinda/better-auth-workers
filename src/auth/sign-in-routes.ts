@@ -56,6 +56,15 @@ export function methodOfPath(path: string): OptionalMethod | undefined {
   )?.method;
 }
 
-export function disallowedMessage(method: OptionalMethod | 'google'): string {
-  return `${method} sign-in is not enabled for this deployment`;
+const SIGN_IN_METHOD_NOT_ALLOWED = 'SIGN_IN_METHOD_NOT_ALLOWED';
+
+// The body of the 403 for a sign-in method this deployment refuses.
+export function disallowedBody(method: OptionalMethod | 'google'): {
+  code: string;
+  message: string;
+} {
+  return {
+    code: SIGN_IN_METHOD_NOT_ALLOWED,
+    message: `${method} sign-in is not enabled for this deployment`,
+  };
 }

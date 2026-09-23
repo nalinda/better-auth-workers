@@ -21,6 +21,7 @@ It is a thin layer. Better Auth's options, plugins and clients are all still you
 - [Banning users from another Worker](#banning-users-from-another-worker)
 - [Non-browser clients](#non-browser-clients)
 - [Migrations](#migrations)
+- [Error codes](#error-codes)
 - [Routing](#routing)
 - [Local development](#local-development)
 - [Test mode](#test-mode)
@@ -257,14 +258,16 @@ phone: {
   otpLength: 6,        // default 6
   expiresIn: 300,      // seconds, default 300
   allowedAttempts: 3,  // default 3
+  awaitDelivery: false, // default false; see "Delivery failures" below
+  beforeSendOTP: undefined, // see "Limiting codes per number" below
 }
 ```
 
 What the package does around your function:
 
-- Runs it under `ctx.waitUntil` so the sign-in response returns immediately and delivery time cannot be used to infer whether a number exists.
+- Runs it under `ctx.waitUntil` so the sign-in response returns immediately, unless you set `awaitDelivery`.
 - Does not queue it. A code that arrives after it expires is worse than no code.
-- Rethrows delivery failures into the Worker's logs, but never into the client response.
+- Logs delivery failures to the Worker's logs. Without `awaitDelivery` they never reach the client response.
 - Never logs the code.
 - Creates the user on the first successful verification of an unknown number. Better Auth needs an email on every user, so it gets `<phoneNumber>@phone.invalid` (a reserved, undeliverable domain) and the number as its name. Override with `signUpOnVerification: { getTempEmail, getTempName? }` if you want a different placeholder.
 
@@ -281,6 +284,96 @@ sendOTP: ({ phoneNumber, code }) =>
 ```
 
 Service-binding calls stay inside Cloudflare's network and never traverse the public internet.
+
+### Delivery failures
+
+By default `send-otp` answers `200` before `sendOTP` has run, so the user can't be told a code didn't go out. Set `awaitDelivery: true` to wait for `sendOTP` and report what happened:
+
+- If `sendOTP` resolves, the response is the usual `200`.
+- If it throws, the response is `502` with `code: 'OTP_DELIVERY_FAILED'`, and the error is logged with the code redacted. The undelivered code is deleted so it can't be verified; a newer code from a resend is left alone.
+- If it throws an `OTPDeliveryError`, the response carries that error's own code, message and status instead, plus `retryAfter` (whole seconds, in the body and as a `Retry-After` header) when you give one. Nothing is logged: it's a refusal you chose.
+
+Better Auth stores the new code before `sendOTP` runs, and only the newest code for a number is accepted. When the new one fails to go out, it's deleted, so the user's previous code, if it hasn't expired, works again. (With your own `betterAuth.secondaryStorage` and `verification.storeInDatabase: false`, which hold one code per number, the resend has already replaced it, so the user has to request a new one.) Refusals you can decide on before sending, such as a per-number limit, belong in `beforeSendOTP` instead (below).
+
+`awaitDelivery` can't be combined with `betterAuth.advanced.backgroundTasks`: Better Auth then runs `sendOTP` as a background task, so `createAuth` refuses the combination. With `awaitDelivery` the response takes as long as delivery does, so keep `sendOTP` fast.
+
+### Limiting codes per number
+
+Better Auth's rate limiter counts requests per IP address, which a client can rotate. To limit codes per phone number, check the number in `beforeSendOTP`. It only sees valid E.164 numbers (anything else is refused with `INVALID_PHONE_NUMBER` without calling it), and it runs before a code is created, so a refusal leaves any code already sent to that number valid, and one refused resend never locks anyone out. Throw an `OTPDeliveryError` to refuse:
+
+```ts
+import { OTPDeliveryError } from 'better-auth-workers';
+
+phone: {
+  beforeSendOTP: async ({ phoneNumber }) => {
+    // e.g. ask the messaging Worker (or a Durable Object) whether this number may get a code now
+    const res = await env.MESSAGES.fetch(
+      `https://messages/otp/allowance?to=${encodeURIComponent(phoneNumber)}`
+    );
+    if (res.status === 429) {
+      const retryAfter = Number(res.headers.get('retry-after')) || 60;
+      throw new OTPDeliveryError('OTP_RESEND_LIMITED', { retryAfter }); // 429, with Retry-After
+    }
+  },
+  sendOTP: async ({ phoneNumber, code }) => {
+    /* deliver */
+  },
+  awaitDelivery: true,
+}
+```
+
+An `OTPDeliveryError`'s status defaults to `429` when `retryAfter` is set and `502` otherwise; pass `status` (`400`, `403`, `429`, `502` or `503`) to choose. An `APIError` it throws is passed through as your own response. Any other error thrown by `beforeSendOTP` answers `502 OTP_DELIVERY_FAILED`. `beforeSendOTP` works with or without `awaitDelivery`. For a limit to hold across isolates, keep the count in a Durable Object or the messaging service, not in memory.
+
+### Sending codes in the user's language
+
+`sendOTP` receives the original `Request` as its second argument. Have the client send the locale in a header, and read it there:
+
+```ts
+// client
+await authClient.phoneNumber.sendOtp(
+  { phoneNumber },
+  { headers: { 'x-locale': 'si' } }
+);
+
+// auth Worker
+sendOTP: async ({ phoneNumber, code }, request) => {
+  const locale = request?.headers.get('x-locale') ?? 'en';
+  // ...
+},
+```
+
+Use a header rather than an extra body field: Better Auth validates the body of `send-otp` and ignores unknown fields.
+
+### Requiring a verified phone for Google users
+
+A user who signs in with Google has no phone number until they add one, so `phoneNumberVerified` is unset. It's on `session.user` (Better Auth returns it with the session), so both the app and a `requireSession` predicate can gate on it:
+
+```ts
+requireSession({ client, predicate: ({ user }) => user.phoneNumberVerified === true });
+```
+
+`requireSession` answers a failed predicate with a plain-text `403`, which doesn't tell the UI why. If the app has to send the user to "add your phone", check in the handler and return a code of your own instead:
+
+```ts
+app.get('/api/matches', requireSession({ client }), (c) => {
+  if (c.get('session').user.phoneNumberVerified !== true) {
+    return c.json({ code: 'PHONE_NOT_VERIFIED' }, 403);
+  }
+  // ...
+});
+```
+
+The signed-in user adds a number with the phone plugin's own flow: `authClient.phoneNumber.sendOtp({ phoneNumber })`, then `authClient.phoneNumber.verify({ phoneNumber, code, updatePhoneNumber: true })`. That sets `phoneNumber` and `phoneNumberVerified` on their user, and the package drops the cached copies of their sessions: the cookie cache in the browser that verified, and the session client's KV entry for every session the user has. So the next `get-session` in that browser, and the next `requireSession` in another Worker for any of the user's sessions, see the verified number straight away. Another browser's own cookie cache refreshes when it expires (`session.cookieCache.maxAge`), since only the verifying browser's cookies can be reached.
+
+If the number already belongs to another user, `verify` fails with `PHONE_NUMBER_EXIST`, and by then the code has been used up, so proving the number again would take a second code (one your own resend limit may refuse). Merging the two users (moving the Google `account` row onto the existing user and deleting the new one) is application logic, since only the app knows what else each user owns. So route the code to the right place the first time: have the client ask an endpoint of your own whether the number is taken before it submits the code. If it's free, the client calls `verify` with `updatePhoneNumber`. If it's taken, the client sends the code to your merge endpoint on the auth Worker, which proves the number with Better Auth's server-only `auth.api.consumePhoneNumberOTP({ body: { phoneNumber, code } })` (it checks and uses up the code without touching any user or session) and then merges. Before deleting the new Google user, revoke its sessions with `auth.api.revokeSessions({ headers: request.headers })` (the merge endpoint is called by that user), which also evicts them from the session client's cache; deleting the user through SQL or the internal adapter alone leaves its cached sessions accepted by other Workers until they expire. After the merge, the user signs in with Google again and lands on the existing user.
+
+`phoneNumber` has a unique constraint, so two users can never hold the same number. A Google identity is looked up by its `accountId` before any user is created, so signing in with it again always reaches the same user. The shipped schema has no unique index on the account key itself, so if you want the database to enforce it too (against two first sign-ins racing), add one in your own migration:
+
+```sql
+create unique index "account_providerId_accountId_uidx" on "account" ("providerId", "accountId");
+```
+
+With `database.schema` set, qualify the table: `on "auth_ba"."account" (...)`.
 
 ## Google sign-in
 
@@ -385,7 +478,7 @@ app.get('/me', requireSession<AppEnv>({ client: (c) => c.get('sessions') }), (c)
 
 If the auth Worker cannot be reached (service binding down, or it answers 5xx, 429, or any status other than 2xx/401/403 — a 404 from a wrong `basePath`, say) the middleware responds `503`, not `401`: an outage or a misconfiguration is not "not signed in", and clients should not clear their session over it. `createSessionClient().get` throws `SessionUnavailableError` in that case and returns `null` only for a real negative answer (`401`/`403`).
 
-`requireSession` also accepts a `predicate` for role checks, returning `403` when it fails. Keep in mind that the `user` it sees is the cached copy — a snapshot taken when the session was verified, refreshed only when the cache entry is evicted (sign-out and revocation, below) or expires with the session. A role change, email change, or a profile update that isn't a ban won't evict it, so a demoted user keeps passing a role predicate until then. If that matters for you, keep `session.expiresIn` short, or re-check the user on the auth Worker for sensitive actions.
+`requireSession` also accepts a `predicate` for role checks, returning `403` when it fails. Keep in mind that the `user` it sees is the cached copy — a snapshot taken when the session was verified, refreshed only when the cache entry is evicted or expires with the session. Sign-out and revocation (below) evict it, and so do the user's own changes through `/update-user` and a phone number change through `verify` with `updatePhoneNumber`, which evict the entry for every session the user has. A change made by someone else, such as an admin changing a role or email, won't evict it, so a demoted user keeps passing a role predicate until then. If that matters for you, keep `session.expiresIn` short, or re-check the user on the auth Worker for sensitive actions.
 
 ```ts
 app.get(
@@ -531,6 +624,32 @@ Changing `idType` on an existing database changes how new ids are made, not the 
 
 Schema changes in this package are always a major version bump.
 
+## Error codes
+
+Every error response from the auth Worker's routes is JSON with a stable `code` to translate in the UI, and a `message` that is only for logs. An unexpected failure is a `500` with `code: 'INTERNAL_ERROR'` (or one of Better Auth's own `FAILED_TO_*` codes, such as `FAILED_TO_GET_SESSION`); treat any 5xx as "try again". With `betterAuth.onAPIError.throw` set, such errors are thrown to your code instead. Only a request that matches no auth route (a wrong `basePath`, an unknown path, or the wrong HTTP method) gets Better Auth's empty `404`. (`requireSession` in your other Workers answers `401`, `403` and `503` in plain text; see [Requiring a verified phone for Google users](#requiring-a-verified-phone-for-google-users) for returning your own code.)
+
+| Situation                                        | Status | `code`                                           | Where                                                                            |
+| ------------------------------------------------ | ------ | ------------------------------------------------ | -------------------------------------------------------------------------------- |
+| Number isn't valid E.164                         | 400    | `INVALID_PHONE_NUMBER`                           | `send-otp` (on `verify`, a malformed number just finds no code: `OTP_NOT_FOUND`) |
+| Wrong code                                       | 400    | `INVALID_OTP`                                    | `verify`                                                                         |
+| Code expired                                     | 400    | `OTP_EXPIRED`                                    | `verify`                                                                         |
+| No code for this number (never sent, or used up) | 400    | `OTP_NOT_FOUND`                                  | `verify`                                                                         |
+| Too many wrong codes; request a new one          | 403    | `TOO_MANY_ATTEMPTS`                              | `verify`                                                                         |
+| Number already belongs to another user           | 400    | `PHONE_NUMBER_EXIST`                             | `verify` with `updatePhoneNumber`                                                |
+| Code could not be delivered                      | 502    | `OTP_DELIVERY_FAILED`                            | `send-otp` with `awaitDelivery`, or a failing `beforeSendOTP`                    |
+| Your own refusal (`OTPDeliveryError`)            | yours  | yours, plus `retryAfter`                         | `send-otp`, from `beforeSendOTP` or an awaited `sendOTP`                         |
+| Rate limited                                     | 429    | `RATE_LIMITED`, `X-Retry-After` header           | any route (Better Auth's limiter, per client IP and route)                       |
+| Unexpected failure                               | 500    | `INTERNAL_ERROR`, or Better Auth's `FAILED_TO_*` | any route (a database or KV error; treat any 5xx as "try again")                 |
+| User is banned (phone sign-in)                   | 403    | `BANNED_USER`                                    | `verify`                                                                         |
+| User is banned (Google sign-in)                  | 302    | `error=BANNED_USER`                              | redirect to `errorCallbackURL` (a query parameter, not JSON)                     |
+| Provider not configured on this Worker           | 404    | `PROVIDER_NOT_FOUND`                             | `sign-in/social`                                                                 |
+| Method refused by `allowedMethods` (deprecated)  | 403    | `SIGN_IN_METHOD_NOT_ALLOWED`                     | that method's routes                                                             |
+| Google consent cancelled or refused              | 302    | `error=access_denied`                            | redirect to `errorCallbackURL` (a query parameter, not JSON)                     |
+
+After `allowedAttempts` wrong codes (3 by default) a code stops working (`TOO_MANY_ATTEMPTS`), and requesting a new one starts over, so that code carries no retry time. Requesting codes is limited by the rate limiter and by your own `beforeSendOTP`. `X-Retry-After` is in seconds; with the limiter's counts in KV it reports the whole window rather than the time left in it.
+
+Most other Google callback failures arrive the same way as `access_denied`, as an `error` query parameter on `errorCallbackURL`. Failures before the sign-in's state can be read (`state_not_found`, an invalid callback request) can't know that URL, and go to Better Auth's error page (`onAPIError.errorURL`, or `<basePath>/error`) instead.
+
 ## Routing
 
 The auth Worker should be same-origin with the app that sets its cookies. Two ways:
@@ -575,7 +694,7 @@ createAuth(env, {
 });
 ```
 
-- **`otpCode`** (4 to 10 digits): every phone verification accepts this code, and `sendOTP` is never called. The attempt limit and expiry don't apply, because no stored code is checked. Requires `phone`.
+- **`otpCode`** (4 to 10 digits): every phone verification accepts this code, and neither `sendOTP` nor `beforeSendOTP` is called. The attempt limit and expiry don't apply, because no stored code is checked. Requires `phone`.
 - **`google`**: Google sign-in goes through an in-process stub instead of Google. The client calls `authClient.signIn.social({ provider: 'google', loginHint: 'alice@example.com' })` exactly as in production. The stub's authorize page redirects straight back and signs in the address named by `loginHint`, with a stable account id (`test-<email>`), or `test.user@example.com` without one. A `loginHint` of `error:access_denied` (or any `error:<code>`) comes back as a refused consent screen does; any other hint must be an email address. No Google credentials are needed, and nothing leaves the Worker. The stub replaces Google entirely, so Google-specific options (`prompt`, `hd`, `disableImplicitSignUp`) don't apply, and sign-in with a Google ID token (`signIn.social({ provider: 'google', idToken })`) isn't supported.
 
 Both let anyone sign in as anyone, so test mode only runs on localhost:

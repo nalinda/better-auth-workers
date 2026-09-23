@@ -38,6 +38,7 @@ interface HookContext {
     sessionToken?: string;
     userId?: string;
     data?: { banned?: boolean };
+    updatePhoneNumber?: boolean;
   };
   headers?: Headers;
   request?: Request;
@@ -176,6 +177,16 @@ const SINGLE_TOKEN_PATHS = new Set([
   '/admin/revoke-user-session',
 ]);
 
+// Routes that change the signed-in user without revoking any session. Every
+// session of that user caches the user in the session client's KV entry, so
+// all of them are evicted (listed in `before`, cleared in `after`, like the
+// revoke-all routes), or a `phoneNumberVerified` gate would keep refusing
+// the user on their other devices after they verify on one.
+function isCurrentUserUpdate(ctx: HookContext): boolean {
+  if (ctx.path === '/update-user') return true;
+  return ctx.path === '/phone-number/verify' && ctx.body?.updatePhoneNumber === true;
+}
+
 async function resolveSingleToken(ctx: HookContext): Promise<string | undefined> {
   // By `after`, the bearer plugin has already turned the header into the
   // cookie. `/admin/stop-impersonating` deletes the impersonation session,
@@ -202,7 +213,7 @@ export function buildSessionTokenCollector(
 }
 
 async function collectSessionTokens(ctx: HookContext, canUseBearer: boolean): Promise<void> {
-  const scope = revocationScope(ctx.path);
+  const scope = revocationScope(ctx.path) ?? (isCurrentUserUpdate(ctx) ? 'current' : undefined);
   if (!scope) return;
   assertInvalidationInternals(ctx);
   const userId = await resolveTargetUserId(ctx, scope, canUseBearer);
@@ -242,6 +253,22 @@ export function buildSessionInvalidationHook(
     const collected = pendingTokens.get(ctx.context);
     pendingTokens.delete(ctx.context);
     if (isAPIError(ctx.context.returned)) return;
+    if (collected && isCurrentUserUpdate(ctx)) {
+      // The update itself succeeded; a stale cached copy is the worst a
+      // failed eviction leaves (KV refuses a second write to a key within a
+      // second), so it is logged rather than turned into a failed update.
+      // Revocations above fail loudly: a surviving entry there is a session
+      // that should be dead.
+      try {
+        await invalidateTokens(kv, collected);
+      } catch (error) {
+        console.error(
+          'better-auth-workers: could not evict cached sessions after a user update',
+          error
+        );
+      }
+      return;
+    }
     if (collected) {
       await invalidateTokens(kv, collected);
       return;

@@ -1,7 +1,7 @@
 import { APIError } from 'better-auth';
 
 import { warnOnce } from '../shared/warn-once';
-import { disallowedMessage, methodOfPath } from './sign-in-routes';
+import { disallowedBody, methodOfPath } from './sign-in-routes';
 import type { CreateAuthOptions } from './types';
 
 type AllowedMethod = 'phone' | 'google' | 'magic-link';
@@ -21,7 +21,7 @@ const ALLOWED_METHODS_DEPRECATION_WARNING =
 const warnAllowedMethodsDeprecated = warnOnce(ALLOWED_METHODS_DEPRECATION_WARNING);
 
 function forbidden(method: AllowedMethod): never {
-  throw new APIError('FORBIDDEN', { message: disallowedMessage(method) });
+  throw new APIError('FORBIDDEN', disallowedBody(method));
 }
 
 /**

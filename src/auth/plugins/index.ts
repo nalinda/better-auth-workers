@@ -15,6 +15,11 @@ export function buildPlugins(
   ctxRef: ContextRef
 ): BetterAuthPlugin[] {
   const plugins: BetterAuthPlugin[] = [admin()];
+  // First after admin: plugins' before hooks run in order, and test mode's
+  // localhost guard must refuse a request before any consumer code
+  // (`beforeSendOTP`) sees it.
+  const testModePlugin = buildTestModePlugin(options);
+  if (testModePlugin) plugins.push(testModePlugin);
   const phonePlugin = buildPhonePlugin(options?.phone, ctxRef, options?.testMode?.otpCode);
   if (phonePlugin) plugins.push(phonePlugin);
   const magicLinkPlugin = buildMagicLinkPlugin(options?.magicLink, ctxRef);
@@ -29,8 +34,6 @@ export function buildPlugins(
   // matches on the full credential — so the plugin is held to the signed
   // `<token>.<signature>` form that sign-in hands back in `set-auth-token`.
   if (options?.bearer) plugins.push(bearer({ requireSignature: true }));
-  const testModePlugin = buildTestModePlugin(options);
-  if (testModePlugin) plugins.push(testModePlugin);
   if (options?.plugins) plugins.push(...options.plugins);
   // `betterAuth.plugins` is appended the same way, so the escape hatch adds
   // plugins rather than replacing the ones the package relies on.
