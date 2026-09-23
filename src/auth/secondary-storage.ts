@@ -128,18 +128,37 @@ function countersFor(kv: KVStore): ReturnType<typeof createCounters> {
   return counters;
 }
 
+// Verification values (phone OTP codes, magic-link tokens, OAuth state) are
+// kept out of KV and in the primary database instead (`verification.
+// storeInDatabase`, set in config.ts). They are written and rewritten within
+// the same second (a wrong OTP guess deletes the code and writes it back
+// with the attempt counted; a failed delivery deletes the code just
+// written), and KV refuses a second write to a key within a second, which
+// would lose the code. KV also has no atomic read-and-remove, so a
+// magic-link token could be consumed twice; the database consumes it once.
+// Better Auth writes and reads these keys through secondary storage first
+// whenever there is one, so this storage declines them and it falls through
+// to the database.
+const VERIFICATION_KEY_PREFIX = 'verification:';
+
+function isVerificationKey(key: string): boolean {
+  return key.startsWith(VERIFICATION_KEY_PREFIX);
+}
+
 function kvSecondaryStorage(kv: KVStore): CreateAuthSecondaryStorage {
   const counters = countersFor(kv);
   return {
-    get: (key: string) => kv.get(key),
-    set: (key: string, value: string, ttl?: number) => kv.put(key, value, kvExpiry(ttl)),
-    delete: (key: string) => kv.delete(key),
-    // Better Auth consumes one-shot verification values (phone OTP codes,
-    // magic-link tokens) through `getAndDelete`. KV has no atomic
-    // read-and-remove, so this is a read followed by a delete; the
-    // consume-once guarantee for OTP still holds through the code's
-    // attempt counter and expiry.
+    get: (key: string) => (isVerificationKey(key) ? null : kv.get(key)),
+    set: async (key: string, value: string, ttl?: number) => {
+      if (!isVerificationKey(key)) await kv.put(key, value, kvExpiry(ttl));
+    },
+    delete: async (key: string) => {
+      if (!isVerificationKey(key)) await kv.delete(key);
+    },
+    // KV has no atomic read-and-remove; Better Auth uses this for
+    // verification values, which never reach KV (above).
     getAndDelete: async (key: string): Promise<string | null> => {
+      if (isVerificationKey(key)) return null;
       const value = await kv.get(key);
       if (value !== null) await kv.delete(key);
       return value;

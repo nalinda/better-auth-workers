@@ -12,6 +12,7 @@ import {
   buildRateLimitConfig,
   buildSessionConfig,
   buildSocialProvidersConfig,
+  buildVerificationConfig,
 } from './config';
 import {
   resolveDatabase,
@@ -27,6 +28,7 @@ import { buildSessionInvalidationHook, buildSessionTokenCollector } from './sess
 import { warnIfTestMode } from './test-mode';
 import type { CreateAuthHook, CreateAuthHooks, CreateAuthOptions } from './types';
 import { validateConfig } from './validate';
+import { buildVerificationCleanup } from './verification-cleanup';
 
 // The instance type is Better Auth's for the plugins this package builds,
 // so `auth.api` is typed with their endpoints. `admin` is a generic
@@ -148,6 +150,8 @@ function buildOwnHooks(options: CreateAuthOptions | undefined, env: AuthEnv): Ow
   if (collectSessionTokens) before.push(withEndpointContext(collectSessionTokens));
   const invalidateSessionCache = buildSessionInvalidationHook(options, env);
   if (invalidateSessionCache) after.push(withEndpointContext(invalidateSessionCache));
+  const cleanUpVerification = buildVerificationCleanup(options, env);
+  if (cleanUpVerification) after.push(cleanUpVerification);
   return { before, after };
 }
 
@@ -221,6 +225,7 @@ function buildAuthConfig(
     ...(socialProviders !== undefined && { socialProviders }),
     advanced: buildAdvancedConfig(options),
     session,
+    verification: buildVerificationConfig(options),
     ...(rateLimit !== undefined && { rateLimit }),
     ...buildHooksField(options, buildOwnHooks(options, env)),
   };

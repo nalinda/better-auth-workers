@@ -10,12 +10,33 @@ type Loose = Record<string, ConfigValue>;
 
 function betterAuthField(
   options: CreateAuthOptions | undefined,
-  field: 'session' | 'rateLimit' | 'advanced' | 'socialProviders'
+  field: 'session' | 'rateLimit' | 'advanced' | 'socialProviders' | 'verification'
 ): Loose | undefined {
   // `field` is a closed literal union, so this is not an injection sink.
   // eslint-disable-next-line security/detect-object-injection -- field is a closed literal union
   const value = options?.betterAuth?.[field];
   return value && typeof value === 'object' ? value : undefined;
+}
+
+// Verification values live in the primary database, not KV: the package's
+// KV storage declines them (see secondary-storage.ts), so Better Auth must
+// be told to use the database. `betterAuth.verification` layers on top.
+// An explicit `storeInDatabase: undefined` counts as unset, not as off:
+// spread over the default it would turn the database off while the KV
+// storage still declines these values, leaving them nowhere.
+export function buildVerificationConfig(options?: CreateAuthOptions): Loose {
+  const verification = betterAuthField(options, 'verification');
+  return { ...verification, storeInDatabase: verification?.storeInDatabase ?? true };
+}
+
+// The package's KV storage never holds verification values, so turning the
+// database off for them would leave OTP codes, magic links and OAuth state
+// nowhere. A consumer who brings their own `betterAuth.secondaryStorage`
+// decides for themselves.
+export function verificationStorageProblem(options?: CreateAuthOptions): string | undefined {
+  if (options?.betterAuth?.secondaryStorage) return;
+  if (betterAuthField(options, 'verification')?.storeInDatabase !== false) return;
+  return 'betterAuth.verification.storeInDatabase: false is not supported with the package KV storage, which keeps verification values (OTP codes, magic links, OAuth state) in the primary database';
 }
 
 export function buildSessionConfig(options?: CreateAuthOptions): Loose {
